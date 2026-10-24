@@ -1,0 +1,76 @@
+name: ticketera
+
+services:
+  app:
+    image: ${TICKETERA_IMAGE:-ghcr.io/brazaoo4/ticketera:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ticketera-app
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-ticket}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-ticketera}?schema=public
+      - REDIS_URL=redis://redis:6379/0
+      - AUTH_SECRET=${AUTH_SECRET:-change_this_auth_secret_with_openssl_rand_base64_32}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change_this_auth_secret_with_openssl_rand_base64_32}
+      - AUTH_TRUST_HOST=true
+      - PUBLIC_CATALOG=${PUBLIC_CATALOG:-false}
+      - INITIAL_ADMIN_USER=${INITIAL_ADMIN_USER:-admin}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - UPLOAD_DIR=/app/uploads
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ticketera-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ticket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-ticketera}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ticket} -d ${POSTGRES_DB:-ticketera}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ticketera-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  uploads_data:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,128 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm]
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ReceiptStatus {
+  PENDING
+  PROCESSING
+  REVIEW
+  CONFIRMED
+  FAILED
+}
+
+enum BaseUnit {
+  KG
+  L
+  UNIT
+}
+
+model User {
+  id        String    @id @default(cuid())
+  username  String    @unique
+  password  String
+  role      Role      @default(USER)
+  enabled   Boolean   @default(true)
+  receipts  Receipt[]
+  createdAt DateTime  @default(now())
+}
+
+model Store {
+  id        String         @id @default(cuid())
+  name      String         @unique
+  slug      String         @unique
+  brandHex  String         @default("#10b981")
+  receipts  Receipt[]
+  aliases   ProductAlias[]
+}
+
+model Receipt {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id])
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id])
+  purchaseDate DateTime
+  totalAmount  Decimal?      @db.Decimal(10, 2)
+  sourceFile   String
+  fileHash     String        @unique
+  aiProvider   String?
+  processingMs Int?
+  status       ReceiptStatus @default(PENDING)
+  errorMessage String?
+  taxBreakdown Json?
+  items        ReceiptItem[]
+  createdAt    DateTime      @default(now())
+
+  @@index([storeId, purchaseDate(sort: Desc)])
+  @@index([userId, purchaseDate(sort: Desc)])
+  @@index([status])
+}
+
+model Product {
+  id           String         @id @default(cuid())
+  slug         String         @unique
+  displayName  String
+  category     String
+  baseUnit     BaseUnit       @default(UNIT)
+  isStaple     Boolean        @default(false)
+  aliases      ProductAlias[]
+  receiptItems ReceiptItem[]
+  createdAt    DateTime       @default(now())
+
+  @@index([category])
+  @@index([isStaple])
+}
+
+model ProductAlias {
+  id                 String   @id @default(cuid())
+  rawAlias           String
+  storeId            String
+  store              Store    @relation(fields: [storeId], references: [id])
+  productId          String
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  unitMeasurePerPack Decimal? @db.Decimal(10, 3) // Net measure per 1 pack/bottle (e.g. 1.500 for 1.5L, 0.500 for 4x125g). Null if variable checkout weight.
+  isVariableWeight   Boolean  @default(false)    // True if weighed at checkout (e.g. 0.547 kg chicken breast or loose fruit)
+  createdAt          DateTime @default(now())
+
+  @@unique([storeId, rawAlias])
+}
+
+model ReceiptItem {
+  id               String   @id @default(cuid())
+  receiptId        String
+  receipt          Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  productId        String?
+  product          Product? @relation(fields: [productId], references: [id])
+
+  rawName          String
+  suggestedName    String
+  suggestedCat     String?
+  matchConfidence  Float    @default(0)
+
+  quantity         Decimal  @db.Decimal(10, 3)
+  unitPrice        Decimal  @db.Decimal(10, 2)
+  totalPrice       Decimal  @db.Decimal(10, 2)
+
+  baseUnit         BaseUnit @default(UNIT)
+  unitMeasure      Decimal  @default(1) @db.Decimal(10, 3)
+  pricePerBaseUnit Decimal  @db.Decimal(10, 2)
+
+  isDiscount       Boolean  @default(false)
+  excluded         Boolean  @default(false)
+  confirmed        Boolean  @default(false)
+
+  @@index([productId, confirmed, excluded])
+  @@index([receiptId])
+}

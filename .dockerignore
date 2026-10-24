@@ -1,0 +1,13 @@
+.git
+.gitignore
+.next
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+uploads
+deploy/.env
+.env
+.env*.local
+.agents
+*.md
