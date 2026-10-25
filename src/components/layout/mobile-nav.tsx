@@ -17,6 +17,7 @@ import {
   FileText,
   TrendingUp,
   ChevronDown,
+  Settings,
 } from "lucide-react";
 import { SearchModal } from "./search-modal";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
@@ -60,6 +61,7 @@ export function MobileNav({
     if (path.startsWith("/my-stats")) return "My Spending";
     if (path.startsWith("/admin/products")) return "Product Catalogue";
     if (path.startsWith("/admin/users")) return "User Management";
+    if (path.startsWith("/admin/settings")) return "System Settings";
     if (path.startsWith("/admin")) return "Admin Console";
     if (path.startsWith("/login")) return "Sign In";
     return "Ticketera";
@@ -166,6 +168,14 @@ export function MobileNav({
                       >
                         <Shield className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                         <span>Manage Users</span>
+                      </Link>
+                      <Link
+                        href="/admin/settings"
+                        onClick={() => setIsUserMenuOpen(false)}
+                        className="flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>System Settings</span>
                       </Link>
                     </div>
                   )}

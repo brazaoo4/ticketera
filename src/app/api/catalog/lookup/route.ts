@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
 
         const response = await fetch(offUrl, {
           headers: {
-            "User-Agent": `Ticketera/2.0.0 (+${process.env.NEXT_PUBLIC_APP_URL || "https://github.com/brazaoo4/ticketera"})`,
+            "User-Agent": `Ticketera/2.0.1 (+${process.env.NEXT_PUBLIC_APP_URL || "https://github.com/brazaoo4/ticketera"})`,
             Accept: "application/json",
           },
           signal: AbortSignal.timeout(4000),

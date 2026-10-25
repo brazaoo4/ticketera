@@ -30,6 +30,14 @@ export async function ensureDatabaseSchema() {
       await prisma.$executeRawUnsafe(`ALTER TABLE "Receipt" ADD COLUMN IF NOT EXISTS "taxBreakdown" JSONB;`).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "ProductAlias" ADD COLUMN IF NOT EXISTS "unitMeasurePerPack" DECIMAL(10,3);`).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "ProductAlias" ADD COLUMN IF NOT EXISTS "isVariableWeight" BOOLEAN NOT NULL DEFAULT false;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "SystemSetting" (
+          "key" TEXT NOT NULL,
+          "value" TEXT NOT NULL,
+          "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "SystemSetting_pkey" PRIMARY KEY ("key")
+        );
+      `).catch(() => null);
       return;
     }
 
@@ -131,6 +139,13 @@ export async function ensureDatabaseSchema() {
         "excluded" BOOLEAN NOT NULL DEFAULT false,
         "confirmed" BOOLEAN NOT NULL DEFAULT false,
         CONSTRAINT "ReceiptItem_pkey" PRIMARY KEY ("id")
+      );`,
+
+      `CREATE TABLE IF NOT EXISTS "SystemSetting" (
+        "key" TEXT NOT NULL,
+        "value" TEXT NOT NULL,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "SystemSetting_pkey" PRIMARY KEY ("key")
       );`,
 
       `CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");`,
@@ -380,10 +395,34 @@ export async function bootstrapAdminUser() {
   }
 }
 
+export async function loadSystemSettings() {
+  try {
+    const setting = await prisma.systemSetting.findUnique({
+      where: { key: "PUBLIC_CATALOG" },
+    });
+    if (setting) {
+      process.env.PUBLIC_CATALOG = setting.value;
+      console.log(`⚡ [Startup] Loaded PUBLIC_CATALOG=${setting.value} from system settings.`);
+    } else {
+      const defaultValue = process.env.PUBLIC_CATALOG === "true" ? "true" : "false";
+      await prisma.systemSetting.upsert({
+        where: { key: "PUBLIC_CATALOG" },
+        update: {},
+        create: { key: "PUBLIC_CATALOG", value: defaultValue },
+      });
+      process.env.PUBLIC_CATALOG = defaultValue;
+      console.log(`⚡ [Startup] Initialized PUBLIC_CATALOG=${defaultValue} in system settings.`);
+    }
+  } catch (err) {
+    console.warn("⚠️ [Startup] Could not load system settings:", err);
+  }
+}
+
 export async function runStartupSeed() {
   try {
     console.log("⚡ [Startup] Checking initial database state (schema & stores)...");
     await ensureDatabaseSchema();
+    await loadSystemSettings();
     await seedSupermarkets();
     await migrateCategoriesToEnglish();
     await cleanupSyntheticSeedDataAndDuplicates();

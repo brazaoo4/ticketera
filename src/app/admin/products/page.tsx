@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { ProductManagementClient, ManagedProduct } from "./product-management-client";
+import { AdminHeaderTabs } from "@/components/admin/admin-header-tabs";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +50,8 @@ export default async function AdminProductsPage() {
   }));
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <AdminHeaderTabs />
       <ProductManagementClient initialProducts={products} />
     </div>
   );

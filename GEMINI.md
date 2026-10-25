@@ -3,6 +3,7 @@
 > **📌 CURRENT STATUS & NEXT STEP (Updated: October 2026)**
 > - **Repository State:** Milestones 1–7, **v2.0 "Occasional Batch & Deep Analytics"**, **Shrinkflation & Spanish IVA Intelligence**, and **Smart Format Normalization, Catalog Lookup & Multi-Size Product Engine** are **100% complete, hardened, and live** with zero static/mock data.
 > - **Recent Enhancements:**
+>   - **In-App System Settings & Dynamic Public/Private Catalogue Policy (`/admin/settings`):** Administrators can toggle the public/private catalogue policy directly inside the application UI under `/admin/settings` (or via top/mobile navigation). Persisted in PostgreSQL (`SystemSetting` table) and synchronized live to `process.env.PUBLIC_CATALOG` with instant cache revalidation—no container or server restart required.
 >   - **Open-Source Readiness & Privacy Policy (`PUBLIC_CATALOG`):** Private-by-default architecture where unauthenticated visitors are redirected to `/login` unless `PUBLIC_CATALOG=true`. External OpenFoodFacts User-Agent dynamically parameterized. First-login root admin creation hardened and secondary claim path eliminated.
 >   - **Custom Supermarkets Management (`/stores` & `stores-client.tsx`):** Users can add and manage regional Spanish supermarket chains (Eroski, BM, Ahorramas, Bonpreu, Gadis, HiperDino) with custom brand hex colors and live badge previews. AI OCR worker dynamically matches custom chains alongside core supermarkets.
 >   - **1-Click Demo Mode (`src/lib/demo/demo-data.ts` & `npm run demo:load`):** Deterministic mock dataset spanning 6 months across 5 supermarkets with realistic Spanish tax brackets and intentional shrinkflation radar trigger (Galletas Tostadas 500g -> 420g). One-click demo exit cleanly purges all demo receipts and placeholder WebP files in a single database transaction.
@@ -75,6 +76,7 @@ ticketera/
     │   ├── redis.ts                                  # Singleton ioredis client configured for BullMQ (`maxRetriesPerRequest: null`)
     │   ├── startup.ts                                # Idempotent boot initializer: DDL check, CORE_STORES upsert, category migration & orphan cleanup
     │   ├── utils.ts                                  # Tailwind `cn()` class merger (`clsx` + `tailwind-merge`)
+    │   ├── settings.ts                               # Dynamic PostgreSQL SystemSetting manager for in-app configuration (PUBLIC_CATALOG)
     │   ├── analytics/
     │   │   └── shrinkflation.ts                      # Pure PostgreSQL Shrinkflation engine detecting stealth quantity reductions
     │   ├── catalog/
@@ -150,6 +152,11 @@ ticketera/
         │   ├── page.tsx                              # Admin-only `/admin/users` server page listing accounts and receipt counts
         │   ├── actions.ts                            # Admin Server Actions: create user, toggle enabled status, and reset password
         │   └── user-management-client.tsx            # Interactive admin user management table and modals
+        ├── admin/settings/
+        │   ├── page.tsx                              # Admin-only `/admin/settings` page for global privacy & instance preferences
+        │   ├── actions.ts                            # Admin Server Actions: `updatePublicCatalogAction`
+        │   └── settings-client.tsx                   # Interactive settings UI with Public/Private toggle, demo data controls & AI overview
+        ├── admin/page.tsx                            # Admin redirect router sending admins to `/admin/settings`
         └── api/
             ├── auth/[...nextauth]/route.ts           # Auth.js v5 HTTP GET/POST handlers
             ├── catalog/lookup/route.ts               # Authenticated GET catalog lookup (OpenFoodFacts Spain API)

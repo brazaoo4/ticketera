@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { Shield, Users, CheckCircle, FileText } from "lucide-react";
 import { UserManagementClient } from "./user-management-client";
+import { AdminHeaderTabs } from "@/components/admin/admin-header-tabs";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,9 @@ export default async function AdminUsersPage() {
           </p>
         </div>
       </div>
+
+      {/* Admin Navigation Tabs */}
+      <AdminHeaderTabs />
 
       {/* KPI Stats Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

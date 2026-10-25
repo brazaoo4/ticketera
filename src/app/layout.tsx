@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { AuthProvider } from "@/components/providers/auth-provider";
 import { AppShell } from "@/components/layout/app-shell";
 import { isDemoModeActive } from "@/lib/demo/demo-data";
+import { isPublicCatalogEnabled } from "@/lib/settings";
 import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-registration";
 
 const geistSans = Geist({
@@ -62,7 +63,7 @@ export default async function RootLayout({
     : null;
 
   const isDemoActive = await isDemoModeActive();
-  const isPublicCatalog = process.env.PUBLIC_CATALOG === "true";
+  const isPublicCatalog = await isPublicCatalogEnabled();
 
   return (
     <html

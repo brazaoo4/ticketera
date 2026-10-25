@@ -18,6 +18,7 @@ import {
   TrendingUp,
   User as UserIcon,
   ChevronDown,
+  Settings,
 } from "lucide-react";
 import { SearchModal } from "./search-modal";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
@@ -214,6 +215,14 @@ export function DesktopNav({ user, publicCatalog = false }: { user?: UserProfile
                         >
                           <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                           <span className="whitespace-nowrap">User Management</span>
+                        </Link>
+                        <Link
+                          href="/admin/settings"
+                          onClick={() => setIsUserMenuOpen(false)}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
+                        >
+                          <Settings className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <span className="whitespace-nowrap">System Settings</span>
                         </Link>
                       </>
                     )}

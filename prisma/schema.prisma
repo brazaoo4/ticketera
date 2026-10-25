@@ -126,3 +126,10 @@ model ReceiptItem {
   @@index([productId, confirmed, excluded])
   @@index([receiptId])
 }
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
