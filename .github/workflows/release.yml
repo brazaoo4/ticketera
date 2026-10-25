@@ -13,6 +13,12 @@ on:
         required: false
         default: "2.0.0"
         type: string
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version (e.g. v2.0.2)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -46,9 +52,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}},value=${{ github.event.inputs.version || '' }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.inputs.version || '' }}
-            type=semver,pattern={{major}},value=${{ github.event.inputs.version || '' }}
+            type=semver,pattern={{version}},value=${{ inputs.version || github.event.inputs.version || '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version || github.event.inputs.version || '' }}
+            type=semver,pattern={{major}},value=${{ inputs.version || github.event.inputs.version || '' }}
             type=raw,value=latest
           labels: |
             org.opencontainers.image.title=Ticketera
