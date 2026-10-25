@@ -280,7 +280,7 @@ interface DemoReceiptDef {
       store: mercadona,
       date: new Date("2026-09-18T10:15:00Z"),
       file: "demo-mercadona-02.webp",
-      title: "Mercadona — Septiembre 2026 (Reducción de tamaño)",
+      title: "Mercadona — September 2026 (Shrinkflation size reduction)",
       items: [
         {
           product: products.galletas,
@@ -754,6 +754,14 @@ export async function clearDemoData(): Promise<{ success: boolean; deletedCount:
         where: { id: { in: orphanIds } },
       });
     }
+
+    // Clean up demo_admin user if they have no remaining receipts
+    await tx.user.deleteMany({
+      where: {
+        username: "demo_admin",
+        receipts: { none: {} },
+      },
+    });
 
     return res.count;
   });

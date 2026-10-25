@@ -31,7 +31,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { ExportDataMenu } from "@/components/common/export-data-menu";
-import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation";
+import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation-types";
 
 export interface TaxBreakdownBracket {
   rate: number;

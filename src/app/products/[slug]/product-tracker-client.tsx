@@ -37,7 +37,7 @@ import {
 } from "./actions";
 import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
 import { useRouter } from "next/navigation";
-import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation";
+import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation-types";
 
 export function formatPackBadge(
   packSize: number,

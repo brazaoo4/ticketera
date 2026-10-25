@@ -148,8 +148,9 @@ docker compose up -d postgres redis
 # Configure environment
 cp .env.example .env
 
-# Generate Prisma client and initialize database
+# Generate Prisma client and synchronize database schema
 npx prisma generate
+npx prisma db push
 npm run dev
 ```
 

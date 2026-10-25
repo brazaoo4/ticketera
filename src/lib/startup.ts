@@ -375,8 +375,10 @@ export async function bootstrapAdminUser() {
 
   if (adminUser && adminPassword) {
     try {
-      const existingUsers = await prisma.user.count();
-      if (existingUsers === 0) {
+      const existingUser = await prisma.user.findUnique({
+        where: { username: adminUser },
+      });
+      if (!existingUser) {
         const bcrypt = (await import("bcryptjs")).default;
         const hashedPassword = await bcrypt.hash(adminPassword, 10);
         await prisma.user.create({

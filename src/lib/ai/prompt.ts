@@ -5,7 +5,7 @@ export const RECEIPT_PARSE_SYSTEM_PROMPT = `You are an expert Spanish grocery re
 Return ONLY valid JSON matching this schema:
 {
   "is_valid_receipt": boolean, // MUST be false if image is NOT a purchase receipt/invoice or has 0 legible grocery items
-  "rejection_reason": string or null, // Spanish explanation if is_valid_receipt is false, e.g. "La imagen no parece ser un ticket de compra válido o no contiene productos legibles."
+  "rejection_reason": string or null, // English explanation if is_valid_receipt is false, e.g. "The image does not appear to be a valid purchase receipt or contains no readable products."
   "store": string (e.g. "Mercadona", "Lidl", "Carrefour", "Alcampo", "Consum", "DIA", "Aldi", "MAS", "Cash Fresh", "Eroski", "Ahorramas", "BM Supermercados", or store name printed on receipt) or null,
   "date": "YYYY-MM-DD" or null,
   "total": number or null,
@@ -37,7 +37,7 @@ Strict Rules:
 0. Receipt Validity & Tabletop/Non-Receipt Rejection:
    - Carefully inspect the image or document. If it is NOT a supermarket/grocery ticket, purchase receipt, or invoice (e.g., photo of a tabletop, empty surface, selfie, person, pet, room, screen, landscape, blurry unreadable smear, blank document, or unrelated text/document), OR contains zero recognizable purchased items and prices:
      Set "is_valid_receipt": false
-     Set "rejection_reason": "La imagen no parece ser un ticket de compra válido o no contiene productos legibles."
+     Set "rejection_reason": "The image does not appear to be a valid purchase receipt or contains no readable products."
      Set "items": []
      Set "store": null
      Set "date": null

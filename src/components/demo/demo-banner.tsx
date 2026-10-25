@@ -10,7 +10,7 @@ export function DemoBanner() {
   const router = useRouter();
 
   const handleClear = async () => {
-    if (!confirm("¿Deseas salir del Modo Demo y borrar todos los datos de demostración?")) {
+    if (!confirm("Are you sure you want to exit Demo Mode and purge all demonstration data?")) {
       return;
     }
     setIsClearing(true);
@@ -18,7 +18,7 @@ export function DemoBanner() {
       await clearDemoDataAction();
       router.refresh();
     } catch {
-      alert("Error al borrar los datos de demostración.");
+      alert("Failed to purge demo data. Please try again.");
     } finally {
       setIsClearing(false);
     }
@@ -30,7 +30,7 @@ export function DemoBanner() {
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
           <span>
-            <strong className="text-amber-300 font-semibold">Modo Demo Activo</strong> — Viendo datos de demostración
+            <strong className="text-amber-300 font-semibold">Demo Mode Active</strong> — Viewing simulated dataset
           </span>
         </div>
 
@@ -44,7 +44,7 @@ export function DemoBanner() {
           ) : (
             <Trash2 className="w-3.5 h-3.5 shrink-0" />
           )}
-          <span>Salir del Modo Demo (Borrar datos demo)</span>
+          <span>Exit Demo Mode (Purge demo data)</span>
         </button>
       </div>
     </div>

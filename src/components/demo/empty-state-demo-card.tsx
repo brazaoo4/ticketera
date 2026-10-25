@@ -7,8 +7,8 @@ import { loadDemoDataAction } from "@/lib/demo/actions";
 import { useRouter } from "next/navigation";
 
 export function EmptyStateDemoCard({
-  title = "Bienvenido a Ticketera",
-  description = "Aún no hay tickets verificados en el sistema. Puedes subir tu primer ticket de compra o cargar un conjunto de datos demo para explorar la plataforma.",
+  title = "Welcome to Ticketera",
+  description = "No confirmed receipts found in the system yet. Upload your first grocery receipt or load the demo dataset to explore the platform.",
 }: {
   title?: string;
   description?: string;
@@ -23,11 +23,11 @@ export function EmptyStateDemoCard({
       if (res?.success) {
         router.refresh();
       } else {
-        const errMsg = (res && "error" in res && typeof res.error === "string") ? res.error : "Desconocido";
-        alert("Error cargando datos demo: " + errMsg);
+        const errMsg = (res && "error" in res && typeof res.error === "string") ? res.error : "Unknown";
+        alert("Error loading demo data: " + errMsg);
       }
     } catch {
-      alert("Error inesperado cargando datos demo.");
+      alert("Unexpected error loading demo data.");
     } finally {
       setIsLoading(false);
     }
@@ -52,7 +52,7 @@ export function EmptyStateDemoCard({
           className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/20 whitespace-nowrap shrink-0"
         >
           <Upload className="w-4 h-4 stroke-[2.5] shrink-0" />
-          <span>Subir Primer Ticket</span>
+          <span>Upload First Receipt</span>
         </Link>
 
         <button
@@ -65,7 +65,7 @@ export function EmptyStateDemoCard({
           ) : (
             <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
           )}
-          <span>Cargar Datos Demo</span>
+          <span>Load Demo Data</span>
         </button>
       </div>
     </div>

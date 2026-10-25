@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 
   if (!rateResult.success) {
     return NextResponse.json(
-      { error: "Demasiadas subidas de tickets. Por favor, espera unos minutos." },
+      { error: "Too many receipt uploads. Please wait a few minutes." },
       {
         status: 429,
         headers: { "Retry-After": String(rateResult.resetSeconds) },
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
     if (mode === "stitch") {
       if (files.length < 2) {
         return NextResponse.json(
-          { error: "El modo 'Ticket Largo' requiere al menos 2 imágenes para unirlas." },
+          { error: "Long Receipt stitch mode requires at least 2 images." },
           { status: 400 }
         );
       }
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "El modo 'Ticket Largo' solo admite fotos o imágenes (JPG, PNG, WebP), no documentos PDF.",
+              "Long Receipt stitch mode only supports photos or images (JPG, PNG, WebP), not PDF documents.",
           },
           { status: 400 }
         );
@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
         if (!magic || magic === "application/pdf") {
           return NextResponse.json(
             {
-              error: `El archivo ${file.name} no es una imagen válida (JPG, PNG, WebP).`,
+              error: `File ${file.name} is not a valid image (JPG, PNG, WebP).`,
             },
             { status: 400 }
           );
@@ -237,7 +237,7 @@ export async function POST(req: NextRequest) {
             fileName: file.name,
             status: "FAILED",
             duplicate: false,
-            error: "Formato no permitido. Solo se aceptan imágenes (JPG, PNG, WebP) o PDFs.",
+            error: "Unsupported format. Only images (JPG, PNG, WebP) or PDFs are accepted.",
           });
           continue;
         }

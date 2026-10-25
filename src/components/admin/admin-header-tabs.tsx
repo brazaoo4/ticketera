@@ -10,10 +10,10 @@ export function AdminHeaderTabs() {
 
   const tabs = [
     {
-      label: "Product Catalogue",
-      href: "/admin/products",
-      icon: ShoppingBag,
-      active: pathname.startsWith("/admin/products"),
+      label: "System Settings",
+      href: "/admin/settings",
+      icon: Settings,
+      active: pathname.startsWith("/admin/settings"),
     },
     {
       label: "User Management",
@@ -22,10 +22,10 @@ export function AdminHeaderTabs() {
       active: pathname.startsWith("/admin/users"),
     },
     {
-      label: "System Settings",
-      href: "/admin/settings",
-      icon: Settings,
-      active: pathname.startsWith("/admin/settings"),
+      label: "Product Catalogue",
+      href: "/admin/products",
+      icon: ShoppingBag,
+      active: pathname.startsWith("/admin/products"),
     },
   ];
 

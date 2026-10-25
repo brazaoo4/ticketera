@@ -27,9 +27,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Ticketera — Inteligencia de Precios e Inflación Personal",
+  title: "Ticketera — Grocery Price Intelligence & Personal Inflation",
   description:
-    "Escaner de tickets de supermercado español y plataforma de inteligencia de precios e inflación personal.",
+    "Spanish grocery receipt scanner, price history intelligence, and personal inflation platform.",
   manifest: "/manifest.webmanifest",
   applicationName: "Ticketera",
   appleWebApp: {

@@ -8,7 +8,6 @@ import {
   Receipt,
   Camera,
   Search,
-  Shield,
   LogOut,
   LogIn,
   ShoppingBag,
@@ -199,32 +198,14 @@ export function DesktopNav({ user, publicCatalog = false }: { user?: UserProfile
                     </Link>
 
                     {user.role === "ADMIN" && (
-                      <>
-                        <Link
-                          href="/admin/products"
-                          onClick={() => setIsUserMenuOpen(false)}
-                          className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
-                        >
-                          <ShoppingBag className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <span className="whitespace-nowrap">Product Catalogue</span>
-                        </Link>
-                        <Link
-                          href="/admin/users"
-                          onClick={() => setIsUserMenuOpen(false)}
-                          className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
-                        >
-                          <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <span className="whitespace-nowrap">User Management</span>
-                        </Link>
-                        <Link
-                          href="/admin/settings"
-                          onClick={() => setIsUserMenuOpen(false)}
-                          className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
-                        >
-                          <Settings className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <span className="whitespace-nowrap">System Settings</span>
-                        </Link>
-                      </>
+                      <Link
+                        href="/admin/settings"
+                        onClick={() => setIsUserMenuOpen(false)}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span className="whitespace-nowrap">Settings</span>
+                      </Link>
                     )}
 
                     <InstallAppButton />

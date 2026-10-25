@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: "/",
     name: "Ticketera",
     short_name: "Ticketera",
-    description: "Escaner de tickets de supermercado español y plataforma de inteligencia de precios e inflación personal",
+    description: "Spanish grocery receipt scanner, price history intelligence, and personal inflation platform",
     start_url: "/",
     scope: "/",
     display: "standalone",

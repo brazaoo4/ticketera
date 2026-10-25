@@ -27,7 +27,7 @@ function validateParsedReceipt(result: ParsedReceipt): void {
   if (result.is_valid_receipt === false || result.items.length === 0) {
     const reason =
       result.rejection_reason?.trim() ||
-      "La imagen o documento subido no parece ser un ticket de compra válido o no contiene productos legibles.";
+      "The uploaded image or document does not appear to be a valid purchase receipt or contains no readable products.";
     throw new InvalidReceiptError(reason);
   }
 }

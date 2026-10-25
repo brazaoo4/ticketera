@@ -4,7 +4,16 @@ const buildVersion = process.env.BUILD_VERSION ?? Date.now().toString(36);
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  serverExternalPackages: ["sharp", "pdf-parse", "bullmq", "ioredis", "bcrypt", "bcryptjs"],
+  serverExternalPackages: [
+    "sharp",
+    "pdf-parse",
+    "bullmq",
+    "ioredis",
+    "bcrypt",
+    "bcryptjs",
+    "pg",
+    "@prisma/adapter-pg",
+  ],
   experimental: {
     serverActions: {
       bodySizeLimit: "50mb",

@@ -44,8 +44,8 @@ export default async function MyStatsPage() {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
         <EmptyStateDemoCard
-          title="Tu IPC Real y Estadísticas"
-          description="Para calcular tu inflación personal y analizar la reduflación en tus compras, necesitas tickets confirmados. Sube tu primer ticket o carga datos de demostración."
+          title="Personal Inflation & Analytics"
+          description="To calculate your personal inflation and track shrinkflation across your groceries, confirmed receipts are required. Upload your first receipt or load the demo dataset."
         />
       </div>
     );

@@ -5,7 +5,7 @@ FROM node:22-alpine AS deps
 RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json* prisma.config.ts* ./
 COPY prisma ./prisma/
 RUN npm ci
 
@@ -41,6 +41,7 @@ RUN mkdir -p /app/uploads /app/.next/cache && \
 # Copy public assets and prisma directory
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts* ./
 
 # Copy standalone output and static assets
 COPY --from=builder --chown=node:node /app/.next/standalone ./

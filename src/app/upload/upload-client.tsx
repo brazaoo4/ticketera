@@ -397,7 +397,7 @@ export function UploadClient({
           <div className="flex items-start gap-3 flex-1">
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <div className="font-semibold text-rose-300">Error al procesar el ticket</div>
+              <div className="font-semibold text-rose-300">Error processing receipt</div>
               <p className="leading-relaxed text-rose-200/90">{uploadError}</p>
             </div>
           </div>
@@ -415,7 +415,7 @@ export function UploadClient({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/30 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5 text-rose-300" />
-                <span>Descartar</span>
+                <span>Discard</span>
               </button>
             )}
             <button
@@ -425,7 +425,7 @@ export function UploadClient({
                 setReceiptStatus(null);
               }}
               className="p-1 text-rose-400 hover:text-rose-200 whitespace-nowrap shrink-0"
-              title="Cerrar aviso"
+              title="Dismiss alert"
             >
               <X className="w-4 h-4" />
             </button>
@@ -540,10 +540,10 @@ export function UploadClient({
                         }
                       }}
                       className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/30 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors flex items-center gap-1"
-                      title="Descartar ticket fallido"
+                      title="Discard failed receipt"
                     >
                       <Trash2 className="w-3 h-3 text-rose-300" />
-                      <span>Descartar</span>
+                      <span>Discard</span>
                     </button>
                   )}
 

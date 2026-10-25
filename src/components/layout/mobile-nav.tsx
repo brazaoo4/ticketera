@@ -154,28 +154,12 @@ export function MobileNav({
                   {user.role === "ADMIN" && (
                     <div className="border-t border-zinc-800/60 my-1 pt-1">
                       <Link
-                        href="/admin/products"
-                        onClick={() => setIsUserMenuOpen(false)}
-                        className="flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors whitespace-nowrap"
-                      >
-                        <Shield className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span>Manage Catalogue</span>
-                      </Link>
-                      <Link
-                        href="/admin/users"
-                        onClick={() => setIsUserMenuOpen(false)}
-                        className="flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors whitespace-nowrap"
-                      >
-                        <Shield className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span>Manage Users</span>
-                      </Link>
-                      <Link
                         href="/admin/settings"
                         onClick={() => setIsUserMenuOpen(false)}
                         className="flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors whitespace-nowrap"
                       >
-                        <Settings className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span>System Settings</span>
+                        <Settings className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>Settings</span>
                       </Link>
                     </div>
                   )}

@@ -15,7 +15,6 @@ import {
   Check,
   AlertCircle,
   Loader2,
-  ArrowLeft,
 } from "lucide-react";
 import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
 import {
@@ -248,42 +247,7 @@ export function ProductManagementClient({
 
   return (
     <div className="space-y-6">
-      {/* Top Banner & Auto-Healer CTA */}
-      <div className="rounded-3xl border border-zinc-800/80 bg-gradient-to-r from-zinc-900/90 via-zinc-900/60 to-zinc-950 p-6 sm:p-8 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-            <Link href="/admin/users" className="hover:text-zinc-200 transition-colors flex items-center gap-1">
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Admin Console</span>
-            </Link>
-            <span>/</span>
-            <span className="text-emerald-400 font-semibold">Catalogue Management</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
-            <ShoppingBag className="w-6 h-6 text-emerald-400" />
-            <span>Product Catalogue & Merger</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-zinc-400 max-w-2xl">
-            Manage canonical product definitions, toggle staple index items, fix units, and merge duplicate entries without data loss.
-          </p>
-        </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={handleAutoHeal}
-            disabled={isHealing}
-            className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-emerald-500/30 hover:bg-emerald-500/10 text-emerald-400 hover:text-emerald-300 text-xs font-semibold shadow-lg shadow-emerald-500/10 inline-flex items-center gap-2 transition-all whitespace-nowrap shrink-0 disabled:opacity-50"
-          >
-            {isHealing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-            )}
-            <span>Auto-Heal Catalogue</span>
-          </button>
-        </div>
-      </div>
 
       {/* Global Alert Notification */}
       {feedback && (
@@ -371,6 +335,21 @@ export function ProductManagementClient({
               </option>
             ))}
           </select>
+
+          {/* Auto-Heal Button */}
+          <button
+            type="button"
+            onClick={handleAutoHeal}
+            disabled={isHealing}
+            className="px-3 py-2 rounded-xl bg-zinc-900 border border-emerald-500/30 hover:bg-emerald-500/10 text-emerald-400 hover:text-emerald-300 text-xs font-semibold shadow-sm inline-flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 disabled:opacity-50 cursor-pointer"
+          >
+            {isHealing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            )}
+            <span>Auto-Heal Catalogue</span>
+          </button>
         </div>
       </div>
 

@@ -153,7 +153,7 @@ export function StoresClient({
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/20 whitespace-nowrap shrink-0 cursor-pointer self-start sm:self-auto"
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>Añadir Supermercado</span>
+            <span>Add Supermarket</span>
           </button>
         )}
       </div>
@@ -245,7 +245,7 @@ export function StoresClient({
                 <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
                   <StoreIcon className="w-4 h-4" />
                 </div>
-                <h3 className="font-bold text-white text-lg">Añadir Supermercado</h3>
+                <h3 className="font-bold text-white text-lg">Add Supermarket</h3>
               </div>
               <button
                 onClick={() => setIsAddModalOpen(false)}
@@ -265,12 +265,12 @@ export function StoresClient({
               {/* Store Name Input */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-zinc-300">
-                  Nombre del Supermercado
+                  Supermarket Name
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="ej. Eroski, Ahorramas, BM Supermercados"
+                  placeholder="e.g. Eroski, Ahorramas, BM Supermercados"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-700 bg-zinc-950 text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
@@ -280,7 +280,7 @@ export function StoresClient({
               {/* Brand Color Picker */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-zinc-300 flex items-center justify-between">
-                  <span>Color de Marca</span>
+                  <span>Brand Color</span>
                   <span className="font-mono text-zinc-400">{brandHex.toUpperCase()}</span>
                 </label>
 
@@ -310,7 +310,7 @@ export function StoresClient({
                     className="w-10 h-10 rounded-lg cursor-pointer bg-transparent border-0"
                   />
                   <span className="text-xs text-zinc-400">
-                    O elige un color personalizado
+                    Or pick a custom hex color
                   </span>
                 </div>
               </div>
@@ -324,9 +324,9 @@ export function StoresClient({
                   {name.trim() ? getStoreMonogram(name) : "TT"}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs text-zinc-500 font-medium">Vista Previa</div>
+                  <div className="text-xs text-zinc-500 font-medium">Live Preview</div>
                   <div className="text-sm font-bold text-white truncate">
-                    {name.trim() || "Nombre del supermercado"}
+                    {name.trim() || "Supermarket name"}
                   </div>
                 </div>
               </div>
@@ -338,7 +338,7 @@ export function StoresClient({
                   onClick={() => setIsAddModalOpen(false)}
                   className="px-4 py-2 rounded-xl text-zinc-400 hover:text-white text-sm font-medium transition-colors whitespace-nowrap shrink-0"
                 >
-                  Cancelar
+                  Cancel
                 </button>
                 <button
                   type="submit"
@@ -346,7 +346,7 @@ export function StoresClient({
                   className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   {isSubmitting && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
-                  <span>Guardar Supermercado</span>
+                  <span>Save Supermarket</span>
                 </button>
               </div>
             </form>

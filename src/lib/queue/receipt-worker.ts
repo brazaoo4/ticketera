@@ -457,7 +457,7 @@ export async function processReceiptJob(
     if (itemsToCreate.length === 0 || result.is_valid_receipt === false) {
       const reason =
         result.rejection_reason?.trim() ||
-        "No se detectaron productos legibles en la imagen o el documento no es un ticket válido.";
+        "No readable products detected in the image or document is not a valid receipt.";
       await prisma.receipt.update({
         where: { id: receiptId },
         data: {

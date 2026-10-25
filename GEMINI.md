@@ -21,13 +21,13 @@
 >   - **Rapid "Confirm & Next Pending" Review Workflow (`/receipts/[id]/review`):** Seamless one-click review queue with sticky `[ ✅ Confirmar y Siguiente (Quedan N) → ]` button, immediate `ProductAlias` training, and automatic re-matching check upon loading subsequent receipts in the batch.
 >   - **"Tu IPC Real" Personal Inflation Engine (`/my-stats`):** Global timeframe selector (`3M`, `6M`, `1Y`, `2Y`, `All`), 3-Card Hero Strip computing user's consumption-weighted personal inflation rate vs. general staple benchmark with monthly euro impact (`+€X/mes`), supermarket efficiency ranking, category price acceleration breakdown, and Top 5 Habitual Staples & Shrinkflation Watch.
 >   - **One-Click Data Portability (`GET /api/export` & `ExportDataMenu`):** Excel-safe UTF-8 BOM (`\uFEFF`) CSV exports (`items_csv`, `receipts_csv`) and structured JSON backup (`json`) downloadable in one click across `/my-stats` and `/my-receipts`.
-> - **Production Readiness:** Full system operational via Docker Compose (Next.js 15, PostgreSQL with `pg_trgm`, Redis, BullMQ worker, and AI failover).
+> - **Production Readiness:** Full system operational via Docker Compose (Next.js 16 with Turbopack, Prisma 7 with pg adapter, PostgreSQL 16 with `pg_trgm`, Redis 7, BullMQ worker, and AI failover).
 
 ---
 
 ## Section A: Project Identity & Core Vision
 
-- **Name:** Ticketera (`bruBraz/ticketera`)
+- **Name:** Ticketera (`brazaoo4/ticketera`)
 - **Purpose:** Self-hosted Spanish grocery receipt scanner and multi-year price history / inflation intelligence platform across **Mercadona**, **Lidl**, **Carrefour**, **Alcampo**, **Consum**, **DIA**, **Aldi**, **MAS**, and **Cash Fresh**.
 - **Core Value Loop:**
   1. **Upload (`/upload`):** User drops single receipts, batches of up to 15 tickets, or multi-photo long tickets (auto-stitched into 1 ticket).
@@ -59,14 +59,15 @@ Every prompt and code modification in this repository **must** obey these four p
 
 ```text
 ticketera/
-├── docker-compose.yml                            # Production Docker Compose stack (Next.js, PostgreSQL 16, Redis 7)
+├── docker-compose.yml                            # Production Docker Compose stack (Next.js 16, PostgreSQL 16, Redis 7)
+├── prisma.config.ts                              # Prisma 7 configuration file declaring datasource URL, schema location, and tsx seed runner
 ├── .env.example                                  # Template environment variables for local and production setup
 ├── prisma/
 │   ├── schema.prisma                                 # Complete PostgreSQL schema (User, Store, Receipt, Product, ProductAlias, ReceiptItem)
 │   └── seed.ts                                       # CLI Prisma seed script that upserts the 9 core Spanish supermarkets
 └── src/
     ├── instrumentation.ts                            # Next.js Node runtime startup hook: runs DB schema/store check & boots BullMQ worker
-    ├── middleware.ts                                 # Edge-safe Auth.js v5 middleware protecting write/admin routes while keeping catalogue public
+    ├── proxy.ts                                      # Next.js 16 Auth.js v5 network proxy boundary protecting write/admin routes
     ├── types/
     │   └── next-auth.d.ts                            # TypeScript module augmentation adding id, username, and role (ADMIN | USER) to Session/JWT
     ├── lib/
@@ -78,7 +79,8 @@ ticketera/
     │   ├── utils.ts                                  # Tailwind `cn()` class merger (`clsx` + `tailwind-merge`)
     │   ├── settings.ts                               # Dynamic PostgreSQL SystemSetting manager for in-app configuration (PUBLIC_CATALOG)
     │   ├── analytics/
-    │   │   └── shrinkflation.ts                      # Pure PostgreSQL Shrinkflation engine detecting stealth quantity reductions
+    │   │   ├── shrinkflation.ts                      # Pure PostgreSQL Shrinkflation engine detecting stealth quantity reductions
+    │   │   └── shrinkflation-types.ts                # Client-safe shrinkflation types and measure formatting helpers
     │   ├── catalog/
     │   │   └── parser.ts                             # OpenFoodFacts Spain product quantity parser & store-to-brand mapping
     │   ├── receipts/
