@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version override (e.g. 2.1.0)"
+        description: "Release version override (e.g. 2.2.0)"
         required: false
         type: string
 
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   validate:
-    name: Typecheck, Lint & Build
+    name: Typecheck, Lint, Test & Build
     runs-on: ubuntu-latest
 
     steps:
@@ -41,6 +41,9 @@ jobs:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ticketera"
         run: npx prisma generate
 
+      - name: Run Unit Tests
+        run: npm test
+
       - name: Typecheck TypeScript
         run: npm run typecheck
 
@@ -54,16 +57,22 @@ jobs:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/ticketera"
         run: npm run build
 
+      - name: Verify Docker build
+        run: docker build -t ticketera:ci-test .
+
   release-please:
     name: Release Please
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: google-github-actions/release-please-action@v4
+      - uses: googleapis/release-please-action@v4
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -82,6 +91,9 @@ jobs:
         startsWith(github.ref, 'refs/tags/v')
       )
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -124,6 +136,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }},enable=${{ steps.version.outputs.tag != 'latest' }}
             type=semver,pattern={{major}},value=${{ steps.version.outputs.tag }},enable=${{ steps.version.outputs.tag != 'latest' }}
             type=raw,value=latest
+            type=sha
           labels: |
             org.opencontainers.image.title=Ticketera
             org.opencontainers.image.description=Self-hosted Spanish grocery receipt scanner, unit-price normalizer, and personal inflation tracker
@@ -131,11 +144,12 @@ jobs:
             org.opencontainers.image.url=https://github.com/brazaoo4/ticketera
             org.opencontainers.image.licenses=AGPL-3.0-only
 
-      - name: Build and push Docker image
+      - name: Build and push multi-arch Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

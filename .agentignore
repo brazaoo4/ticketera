@@ -1,0 +1,17 @@
+# Node dependencies & Next.js cache
+node_modules/
+.next/
+tsconfig.tsbuildinfo
+package-lock.json
+
+# Local runtime data & uploads
+uploads/
+*.webp
+*.pdf
+
+# Environment files & secrets
+.env
+.env*.local
+
+# Git internals
+.git/

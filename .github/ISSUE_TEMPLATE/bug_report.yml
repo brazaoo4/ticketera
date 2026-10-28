@@ -1,0 +1,104 @@
+name: "🐛 Bug Report"
+description: "Report a bug or unexpected behavior in Ticketera"
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide as much context as possible.
+        If this is a security vulnerability, please refer to [SECURITY.md](https://github.com/brazaoo4/ticketera/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: "Bug Description"
+      description: "A clear and concise description of what the problem is."
+      placeholder: "e.g., Uploading a receipt from Mercadona causes..."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Steps to Reproduce"
+      description: "Exact steps to reproduce the behavior."
+      placeholder: |
+        1. Go to '/upload'
+        2. Upload a receipt image
+        3. Click 'Confirm' on review page
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected Behavior"
+      description: "What did you expect to happen instead?"
+    validations:
+      required: true
+  - type: dropdown
+    id: supermarket
+    attributes:
+      label: "Supermarket Chain (if receipt issue)"
+      description: "Which supermarket printed the receipt?"
+      options:
+        - "Mercadona"
+        - "Lidl"
+        - "Carrefour"
+        - "Consum"
+        - "DIA"
+        - "Alcampo"
+        - "Aldi"
+        - "MAS"
+        - "Cash Fresh"
+        - "Custom Regional Supermarket"
+        - "Not applicable (UI / General Bug)"
+    validations:
+      required: true
+  - type: dropdown
+    id: ai_provider
+    attributes:
+      label: "AI OCR Provider"
+      description: "Which AI vision model is configured in your environment?"
+      options:
+        - "Google Gemini (gemini-2.5-flash)"
+        - "Groq (Llama 4 Scout)"
+        - "OpenAI (gpt-4o-mini)"
+        - "Default Failover Cascade"
+        - "Not applicable"
+    validations:
+      required: true
+  - type: dropdown
+    id: ticket_format
+    attributes:
+      label: "Ticket Format"
+      description: "What format was the uploaded receipt?"
+      options:
+        - "Single Photo (JPG/PNG/WebP)"
+        - "Multi-Photo Stitched Ticket"
+        - "Digital App PDF (Mercadona, Lidl Plus)"
+        - "Not applicable"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment_mode
+    attributes:
+      label: "Deployment Mode"
+      description: "How is Ticketera running?"
+      options:
+        - "Docker Compose (Official GHCR image)"
+        - "Docker Compose (Built from source)"
+        - "Kubernetes / TrueNAS / Unraid"
+        - "Local Node.js Development"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Relevant Server or Browser Logs"
+      description: "Attach server output (e.g. `docker logs --tail=50 ticketera-app`) or browser console logs. Please redact private API keys."
+      render: shell
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: "Additional Context"
+      description: "Any other details, OS platform, reverse proxy setup (Caddy, Traefik, Nginx, Cloudflare), or environment nuances."
