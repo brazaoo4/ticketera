@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0](https://github.com/brazaoo4/ticketera/compare/v2.1.0...v2.2.0) (2026-10-28)
+
+
+### Features
+
+* **oss:** prepare repository for public open-source release on GitHub ([a293ffa](https://github.com/brazaoo4/ticketera/commit/a293ffa6d66041686192773681774b1838613fcf))
+* **oss:** prepare repository for public open-source release on GitHub ([c8f5f41](https://github.com/brazaoo4/ticketera/commit/c8f5f419a2251c134a169971bdc06abaec446ac0))
+
 ## [2.1.0](https://github.com/brazaoo4/ticketera/compare/v2.0.1...v2.1.0) (2026-10-25)
 
 ### Features
