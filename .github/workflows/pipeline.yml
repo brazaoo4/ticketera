@@ -191,6 +191,8 @@ jobs:
       - name: Extract Docker metadata & OCI labels
         id: meta
         uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -235,7 +237,14 @@ jobs:
           readarray -t annotations < <(jq -r '.annotations[]? // empty' <<< "$DOCKER_METADATA_OUTPUT_JSON")
           annotation_args=()
           for a in "${annotations[@]}"; do
-            [[ -n "$a" ]] && annotation_args+=(--annotation="$a")
+            [[ -z "$a" ]] && continue
+            # imagetools create only supports 'index:' or 'manifest-descriptor:'
+            # Rewrite any 'manifest:' prefix to 'index:'
+            a="${a/#manifest:/index:}"
+            if [[ "$a" != index:* && "$a" != manifest-descriptor:* ]]; then
+              a="index:$a"
+            fi
+            annotation_args+=(--annotation "$a")
           done
 
           images=()
