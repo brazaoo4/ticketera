@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.1](https://github.com/brazaoo4/ticketera/compare/v2.2.0...v2.2.1) (2026-10-28)
+
+
+### Performance Improvements
+
+* **ci:** use native arm64 runners and build matrix to eliminate QEMU build bottleneck ([22fdbaa](https://github.com/brazaoo4/ticketera/commit/22fdbaa7e22821ebfe357d4399400cccaf80db75))
+* **ci:** use native arm64 runners and build matrix to eliminate QEMU build bottleneck ([a01779f](https://github.com/brazaoo4/ticketera/commit/a01779f8caacaafbf08b6ec8c104a95002e6e2ce))
+
 ## [2.2.0](https://github.com/brazaoo4/ticketera/compare/v2.1.0...v2.2.0) (2026-10-28)
 
 
