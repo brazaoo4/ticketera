@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.2](https://github.com/brazaoo4/ticketera/compare/v2.2.1...v2.2.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ci:** safely pass tags and annotations with spaces to imagetools and enable docs releases ([3a3fa92](https://github.com/brazaoo4/ticketera/commit/3a3fa92b06279f823556c32773bce82fb10a5366))
+* **ci:** safely pass tags and annotations with spaces to imagetools and enable docs releases ([2cf220a](https://github.com/brazaoo4/ticketera/commit/2cf220a1104bf4cff792d654f83ca6dfeecedbd7))
+
 ## [2.2.1](https://github.com/brazaoo4/ticketera/compare/v2.2.0...v2.2.1) (2026-10-28)
 
 
