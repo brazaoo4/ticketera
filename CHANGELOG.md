@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.5](https://github.com/brazaoo4/ticketera/compare/v2.2.4...v2.2.5) (2026-10-28)
+
+
+### Performance Improvements
+
+* **ci:** accelerate docker and nextjs builds with buildkit cache mounts ([f26489c](https://github.com/brazaoo4/ticketera/commit/f26489cb8471bb9faa76cb951892c5372cc7fb11))
+* **ci:** accelerate docker and nextjs builds with buildkit cache mounts ([779496f](https://github.com/brazaoo4/ticketera/commit/779496f6506c7c836b244dff96a77b143b410375))
+
 ## [2.2.4](https://github.com/brazaoo4/ticketera/compare/v2.2.3...v2.2.4) (2026-10-28)
 
 
