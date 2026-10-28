@@ -1,13 +1,37 @@
+# Git & CI/CD workflows
 .git
 .gitignore
+.github
+.forgejo
+
+# Local environment & secrets
+.env
+.env*.local
+deploy/.env
+
+# Node & Next.js build caches
 .next
 node_modules
+tsconfig.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-uploads
-deploy/.env
-.env
-.env*.local
-.agents
+
+# Application uploads & runtime data
+uploads/
+
+# Documentation, tests & assets (do not bust Docker Buildx layers)
 *.md
+docs/
+tests/
+LICENSE
+CONTRIBUTING.md
+SECURITY.md
+
+# Compose & Release Please configs
+docker-compose*.yml
+compose*.yaml
+release-please*
+.release-please*
+.agents
+.agentignore

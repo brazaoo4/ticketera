@@ -1,29 +1,152 @@
 <div align="center">
 
+<img src="docs/assets/ticketera-social-preview.png" alt="Ticketera - Self-Hosted Grocery Receipt Scanner & Personal Inflation Platform" width="800">
+
 # 🧾 Ticketera
 
 **Self-hosted Spanish grocery receipt scanner, unit-price normalizer, and personal inflation platform.**
 
+[![CI/CD](https://github.com/brazaoo4/ticketera/actions/workflows/pipeline.yml/badge.svg)](https://github.com/brazaoo4/ticketera/actions/workflows/pipeline.yml)
+[![GHCR Container](https://img.shields.io/badge/Container-GHCR-181717?logo=github)](https://github.com/brazaoo4/ticketera/pkgs/container/ticketera)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
+[![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16_pg__trgm-336791?logo=postgresql)](https://www.postgresql.org)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)](LICENSE)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16_pg__trgm-336791?logo=postgresql)](https://www.postgresql.org)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com)
-[![GHCR](https://img.shields.io/badge/Container-GHCR-181717?logo=github)](https://github.com/brazaoo4/ticketera/pkgs/container/ticketera)
 
-[Features](#-key-features) • [Quick Start](#-quick-start-docker-compose) • [Demo Mode](#-1-click-demo-mode) • [Configuration](#-environment-variables) • [Architecture](#-architecture) • [Security & Privacy](#-security--privacy)
+*Built for personal use on a homelab server to track real grocery inflation across Spanish supermarkets. Open-sourced if you find it helpful.*
+
+[Why Ticketera?](#-why-ticketera) • [Quick Start](#-quick-start-docker-compose) • [Demo Mode](#-1-click-demo-mode) • [Features](#-key-features) • [Architecture](#%EF%B8%8F-system-architecture) • [Environment Variables](#%EF%B8%8F-environment-variables)
 
 </div>
 
 ---
 
-## 🎯 The Problem & The Solution
+> I built Ticketera because tracking grocery inflation in Spain across Mercadona, Lidl, Carrefour, Consum, and DIA was infuriating. Cryptic POS abbreviations (`PECHUGA POLLO BANDEJ`, `LECHE ENT MILBONA 1L`), stealth shrinkflation (cookies shrinking from 500g to 420g overnight at the same price), and mixed packaging formats made it impossible to know if I was spending more or simply buying less. It runs quietly on my homelab server with local AI OCR and failover—extracting items, catching stealth reductions, and computing my real personal IPC.
 
-Tracking supermarket inflation in Spain is messy:
-- Every supermarket uses cryptic POS abbreviations (`PECHUGA POLLO BANDEJ`, `LECHE ENT MILBONA 1L`, `HUEVOS CAMPEROS DOC`).
-- Supermarkets frequently adjust package sizes to mask price hikes (**Shrinkflation / Reduflación**)—for instance, shrinking cookies from 500g to 420g while keeping the price at €1.75.
-- Comparing a 6x1L milk pack to a single 1L brick or a 5L oil jug to a 1L bottle requires accurate base unit normalization (`€/kg`, `€/L`, `€/unit`).
+---
 
-**Ticketera** solves this through automated receipt OCR, deterministic pack-size memory, and consumption-weighted price analytics. Simply drop a receipt photo or digital PDF; the AI extracts every line item, normalizes units, calculates tax breakdowns, and continuously trains local POS aliases so subsequent purchases match instantaneously.
+## 💡 Why Ticketera?
+
+| Challenge | Manual Spreadsheets | Generic Expense Apps | 🧾 Ticketera |
+| :--- | :--- | :--- | :--- |
+| **Receipt Entry** | ❌ Tedious manual typing | ⚠️ Manual total amount only | **✅ Auto OCR & Line-Item Extraction (Gemini / Groq / OpenAI)** |
+| **Format Discrepancies** | ❌ 6x1L brick vs 1.5L bottle mixed up | ❌ No line-item or package awareness | **✅ Automated Base-Unit Normalization (`€/kg`, `€/L`, `€/unit`)** |
+| **Shrinkflation Detection** | ❌ Blind to stealth size drops | ❌ Completely unaware | **✅ Pure SQL Shrinkflation Radar & Timeline Alerts** |
+| **Spanish Grocery Taxes** | ❌ Manual tax computation | ❌ Single lump sum | **✅ Automatic Printed IVA Breakdown (0%–4%, 5%–10%, 21%)** |
+| **Supermarket Pricing** | ❌ Incomplete single-store view | ❌ No multi-store basket comparison | **✅ Multi-Store Comparator & Smart Split Basket Route** |
+| **Data Ownership** | ⚠️ Cloud-dependent / local files | ❌ Commercial bank aggregators | **✅ 100% Self-Hosted, PostgreSQL 16 & One-Click Portability** |
+
+---
+
+## 🐳 Quick Start: Server Deployment
+
+Create a `docker-compose.yml` file (or paste into Dockhand / Portainer) and launch the stack:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/brazaoo4/ticketera:latest
+    container_name: ticketera-app
+    restart: unless-stopped
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "3000:3000"
+    environment:
+      # ========================================================================
+      # 1. CORE SERVER SETTINGS
+      # ========================================================================
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+      - UPLOAD_DIR=/app/uploads
+
+      # Database & Redis Connections (Internal Docker Network)
+      - DATABASE_URL=postgresql://ticket:change-me@postgres:5432/ticketera?schema=public
+      - REDIS_URL=redis://redis:6379/0
+
+      # ========================================================================
+      # 2. SECURITY & AUTHENTICATION
+      # ========================================================================
+      # Generate secure random secrets with: openssl rand -base64 32
+      - AUTH_SECRET=change_this_auth_secret_with_openssl_rand_base64_32
+      - NEXTAUTH_SECRET=change_this_auth_secret_with_openssl_rand_base64_32
+      - AUTH_TRUST_HOST=true
+
+      # Catalog Access: "false" requires login; "true" enables public viewing
+      - PUBLIC_CATALOG=false
+
+      # Optional initial admin credentials bootstrapped on empty database
+      - INITIAL_ADMIN_USER=admin
+      - INITIAL_ADMIN_PASSWORD=
+
+      # ========================================================================
+      # 3. AI OCR PROVIDERS (At least one key required for receipt OCR)
+      # ========================================================================
+      # Primary Vision Model (Recommended & Free Tier available):
+      - GEMINI_API_KEY=
+      # Multimodal Fallbacks (Optional):
+      - GROQ_API_KEY=
+      - OPENAI_API_KEY=
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ticketera-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ticket
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: ticketera
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticket -d ticketera"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ticketera-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  uploads_data:
+  postgres_data:
+  redis_data:
+```
+
+### 1-Liner Quick Download
+```bash
+mkdir ticketera && cd ticketera
+curl -O https://raw.githubusercontent.com/brazaoo4/ticketera/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/brazaoo4/ticketera/main/.env.example
+cp .env.example .env
+# Edit .env with your generated secrets and GEMINI_API_KEY:
+docker compose up -d
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+> [!TIP]
+> **First Login Onboarding:** If no users exist, the very first user who signs in through the `/login` screen automatically claims the root **ADMIN** account. Alternatively, provide `INITIAL_ADMIN_USER` and `INITIAL_ADMIN_PASSWORD` in your environment.
 
 ---
 
@@ -72,42 +195,6 @@ Evaluating Ticketera or testing without scanning receipts?
 
 ---
 
-## 🐳 Quick Start (Docker Compose)
-
-### 1. Download `docker-compose.yml` and `.env.example`
-```bash
-mkdir ticketera && cd ticketera
-curl -O https://raw.githubusercontent.com/bruBraz/ticketera/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/bruBraz/ticketera/main/.env.example
-cp .env.example .env
-```
-
-### 2. Configure Environment (`.env`)
-Generate secrets and add at least one AI API key (Gemini is free and recommended):
-```bash
-# Generate secure auth secrets
-openssl rand -base64 32
-```
-Edit `.env`:
-```env
-AUTH_SECRET=your_generated_secret_here
-NEXTAUTH_SECRET=your_generated_secret_here
-
-# At least one AI key required for receipt OCR:
-GEMINI_API_KEY=your_gemini_api_key_here
-```
-
-### 3. Launch with Docker Compose
-```bash
-docker compose up -d
-```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-> [!TIP]
-> **First Login Onboarding:** If no users exist, the very first user who signs in through the `/login` screen automatically claims the root **ADMIN** account. Alternatively, set `INITIAL_ADMIN_USER` and `INITIAL_ADMIN_PASSWORD` in your `.env` to bootstrap credentials automatically on startup.
-
----
-
 ## ⚙️ Environment Variables
 
 | Variable | Default | Description |
@@ -124,6 +211,46 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `OPENAI_API_KEY` | *(optional)* | OpenAI API key (Second fallback: `gpt-4o-mini`) |
 | `UPLOAD_DIR` | `/app/uploads` | Path to persistent storage for receipt images and PDFs |
 | `NEXT_PUBLIC_APP_URL` | `http://localhost:3000` | Canonical instance URL (used for PWA manifest & OpenFoodFacts User-Agent) |
+
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Ingestion["1. Ingestion & Preprocessing"]
+        A1["Receipt Upload (Photo / PDF / Multi-photo)"] --> A2["Sharp Contrast / Vertical Stitching / pdf-parse"]
+        A2 --> A3["BullMQ Background Job (Redis)"]
+    end
+
+    subgraph AI_Cascade["2. AI Structured OCR Failover"]
+        B1["Google Gemini 2.5 Flash (Primary)"] -->|Fallback on Rate Limit| B2["Groq Multimodal (Secondary)"]
+        B2 -->|Fallback| B3["OpenAI GPT-4o-mini (Tertiary)"]
+    end
+
+    subgraph Matching["3. Alias & Product Resolution"]
+        C1["Exact Match: Store ProductAlias"]
+        C2["Fuzzy Match: PostgreSQL pg_trgm"]
+        C3["OpenFoodFacts Spain Catalog Lookup"]
+    end
+
+    subgraph Review["4. 15-Second Split-Screen Workstation"]
+        D1["Visual Receipt Evidence + Math Sanity Bar"]
+        D2["Confirm & Next -> Trains ProductAlias Invariants"]
+    end
+
+    subgraph Analytics["5. Public & Personal Price Intelligence"]
+        E1["Recharts Multi-Store Price Evolution"]
+        E2["Radar de Reduflación (Shrinkflation Engine)"]
+        E3["Tu IPC Real (Consumption-Weighted Inflation)"]
+        E4["El Impacto del IVA (Tax Bracket Tracker)"]
+    end
+
+    A3 --> AI_Cascade
+    AI_Cascade --> Matching
+    Matching --> Review
+    Review --> Analytics
+```
 
 ---
 
@@ -154,8 +281,9 @@ npx prisma db push
 npm run dev
 ```
 
-### Code Quality & Validation
+### Code Quality & Automated Tests
 ```bash
+npm test             # Automated unit test suite
 npm run typecheck    # TypeScript compiler check
 npm run lint         # ESLint validation
 npm run build        # Production Next.js build

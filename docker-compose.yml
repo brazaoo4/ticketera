@@ -1,6 +1,9 @@
 name: ticketera
 
 services:
+  # ============================================================================
+  # 1. APPLICATION & WEB SERVER
+  # ============================================================================
   app:
     image: ${TICKETERA_IMAGE:-ghcr.io/brazaoo4/ticketera:latest}
     build:
@@ -8,6 +11,7 @@ services:
       dockerfile: Dockerfile
     container_name: ticketera-app
     restart: unless-stopped
+    user: "1000:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -15,22 +19,41 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     environment:
+      # Core Server Settings
       - NODE_ENV=production
       - PORT=3000
       - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - UPLOAD_DIR=/app/uploads
+
+      # Database & Queue Connections (Internal Docker Network)
       - DATABASE_URL=postgresql://${POSTGRES_USER:-ticket}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-ticketera}?schema=public
       - REDIS_URL=redis://redis:6379/0
+
+      # ========================================================================
+      # 2. SECURITY & AUTHENTICATION
+      # ========================================================================
+      # Generate random 32+ byte strings with: openssl rand -base64 32
       - AUTH_SECRET=${AUTH_SECRET:-change_this_auth_secret_with_openssl_rand_base64_32}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-change_this_auth_secret_with_openssl_rand_base64_32}
       - AUTH_TRUST_HOST=true
+
+      # Catalog Access Policy: "false" requires login; "true" enables public viewing
       - PUBLIC_CATALOG=${PUBLIC_CATALOG:-false}
+
+      # Optional cold-boot administrator setup (hashed on first boot)
       - INITIAL_ADMIN_USER=${INITIAL_ADMIN_USER:-admin}
       - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
+
+      # ========================================================================
+      # 3. AI OCR PROVIDERS (At least one key required for receipt processing)
+      # ========================================================================
+      # Primary Vision Model (Recommended & Free Tier available)
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # First Multimodal Fallback
       - GROQ_API_KEY=${GROQ_API_KEY:-}
+      # Secondary Fallback
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - UPLOAD_DIR=/app/uploads
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
     env_file:
       - path: .env
         required: false
@@ -42,12 +65,16 @@ services:
       redis:
         condition: service_healthy
 
+  # ============================================================================
+  # 4. INTERNAL PERSISTENCE & QUEUES (Isolated from host 0.0.0.0 by default)
+  # ============================================================================
   postgres:
     image: postgres:16-alpine
     container_name: ticketera-postgres
     restart: unless-stopped
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # Uncomment only for direct host database inspection (binds to loopback):
+    # ports:
+    #   - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ticket}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
@@ -64,8 +91,9 @@ services:
     image: redis:7-alpine
     container_name: ticketera-redis
     restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # Uncomment only for direct host redis inspection (binds to loopback):
+    # ports:
+    #   - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
