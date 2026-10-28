@@ -199,6 +199,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ steps.version.outputs.tag }},enable=${{ steps.version.outputs.tag != 'latest' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.tag }},enable=${{ steps.version.outputs.tag != 'latest' }}
             type=semver,pattern={{major}},value=${{ steps.version.outputs.tag }},enable=${{ steps.version.outputs.tag != 'latest' }}
+            type=raw,value=${{ steps.version.outputs.tag }},enable=${{ steps.version.outputs.tag != 'latest' }}
             type=raw,value=latest
             type=sha
           labels: |
@@ -256,4 +257,4 @@ jobs:
 
       - name: Inspect final multi-platform image
         run: |
-          docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}
+          docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
