@@ -7,7 +7,8 @@ WORKDIR /app
 
 COPY package.json package-lock.json* prisma.config.ts* ./
 COPY prisma ./prisma/
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # Stage 2: Builder
 FROM node:22-alpine AS builder
@@ -21,7 +22,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ticketera"
 RUN npx prisma generate
-RUN npm run build
+RUN --mount=type=cache,target=/app/.next/cache \
+    npm run build
 
 # Stage 3: Runner
 FROM node:22-alpine AS runner
