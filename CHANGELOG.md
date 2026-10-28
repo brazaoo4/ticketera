@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.4](https://github.com/brazaoo4/ticketera/compare/v2.2.3...v2.2.4) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ci:** add raw release tag to docker metadata and inspect generated tag ([85b2d9a](https://github.com/brazaoo4/ticketera/commit/85b2d9ab5212599f9e5fbbbdc2fa95b001701793))
+* **ci:** add raw release tag to docker metadata and inspect generated tag ([3bf6fdb](https://github.com/brazaoo4/ticketera/commit/3bf6fdbf66faa8fb71a726751611f6c3750cd875))
+
 ## [2.2.3](https://github.com/brazaoo4/ticketera/compare/v2.2.2...v2.2.3) (2026-10-28)
 
 
