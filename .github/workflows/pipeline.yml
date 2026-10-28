@@ -226,11 +226,24 @@ jobs:
       - name: Create multi-platform manifest and push tags
         working-directory: ${{ runner.temp }}/digests
         run: |
-          TAGS_ARGS=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
-          ANNOTATIONS_ARGS=$(jq -cr '.annotations | map("--annotation " + .) | join(" ") // ""' <<< "$DOCKER_METADATA_OUTPUT_JSON")
-          IMAGES=$(find . -maxdepth 1 -type f -printf "ghcr.io/${{ github.repository }}@sha256:%f ")
-          # shellcheck disable=SC2086
-          docker buildx imagetools create $TAGS_ARGS $ANNOTATIONS_ARGS $IMAGES
+          readarray -t tags < <(jq -r '.tags[]? // empty' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          tag_args=()
+          for t in "${tags[@]}"; do
+            [[ -n "$t" ]] && tag_args+=(--tag "$t")
+          done
+
+          readarray -t annotations < <(jq -r '.annotations[]? // empty' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          annotation_args=()
+          for a in "${annotations[@]}"; do
+            [[ -n "$a" ]] && annotation_args+=(--annotation="$a")
+          done
+
+          images=()
+          for f in *; do
+            [[ -f "$f" ]] && images+=("ghcr.io/${{ github.repository }}@sha256:$f")
+          done
+
+          docker buildx imagetools create "${tag_args[@]}" "${annotation_args[@]}" "${images[@]}"
 
       - name: Inspect final multi-platform image
         run: |
