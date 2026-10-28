@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/assets/ticketera-social-preview.png" alt="Ticketera - Self-Hosted Grocery Receipt Scanner & Personal Inflation Platform" width="800">
-
 # 🧾 Ticketera
 
 **Self-hosted Spanish grocery receipt scanner, unit-price normalizer, and personal inflation platform.**
