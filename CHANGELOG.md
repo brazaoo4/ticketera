@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.3](https://github.com/brazaoo4/ticketera/compare/v2.2.2...v2.2.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ci:** target index annotations in imagetools multi-arch manifest step ([c6bc752](https://github.com/brazaoo4/ticketera/commit/c6bc75207600c35b87c6ea8111dd37906cdf9779))
+* **ci:** target index annotations in imagetools multi-arch manifest step ([32a3fc6](https://github.com/brazaoo4/ticketera/commit/32a3fc604050cf34998d466ca6c6f1d3909cf6ff))
+
 ## [2.2.2](https://github.com/brazaoo4/ticketera/compare/v2.2.1...v2.2.2) (2026-10-28)
 
 
