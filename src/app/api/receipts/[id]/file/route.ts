@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getReceiptFilePath } from "@/lib/receipts/preprocess";
+import { renderPdfToImage } from "@/lib/receipts/pdf-extract";
 import fs from "fs";
+import path from "path";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +47,81 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const uploadDir =
+    process.env.UPLOAD_DIR ||
+    (process.env.NODE_ENV === "production"
+      ? "/app/uploads"
+      : path.join(process.cwd(), "uploads"));
+
+  const companionPdfPath = path.join(uploadDir, `${id}.pdf`);
+  const companionWebpPath = path.join(uploadDir, `${id}.webp`);
+  const hasOriginalPdf = fs.existsSync(companionPdfPath);
+
+  const url = req.nextUrl;
+  const wantOriginal = url.searchParams.get("original") === "true";
+
+  // Case 1: Client explicitly requested the pristine original PDF
+  if (wantOriginal && hasOriginalPdf) {
+    try {
+      const pdfBuffer = await fs.promises.readFile(companionPdfPath);
+      return new NextResponse(new Uint8Array(pdfBuffer), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "X-Content-Type-Options": "nosniff",
+          "Content-Disposition": `attachment; filename="receipt-${id}.pdf"`,
+          "Cache-Control": "private, max-age=86400",
+        },
+      });
+    } catch (pdfErr) {
+      console.error(`[FileRoute] Error reading original PDF for ${id}:`, pdfErr);
+      return NextResponse.json({ error: "Could not read original PDF" }, { status: 500 });
+    }
+  }
+
+  // Case 2: Visual image display (WebP)
+  if (fs.existsSync(companionWebpPath)) {
+    try {
+      const webpBuffer = await fs.promises.readFile(companionWebpPath);
+      return new NextResponse(new Uint8Array(webpBuffer), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/webp",
+          "X-Content-Type-Options": "nosniff",
+          "X-Has-Original-Pdf": hasOriginalPdf ? "true" : "false",
+          "Content-Disposition": `inline; filename="${id}.webp"`,
+          "Cache-Control": "private, max-age=86400, stale-while-revalidate=3600",
+        },
+      });
+    } catch (webpErr) {
+      console.error(`[FileRoute] Error reading WebP companion for ${id}:`, webpErr);
+    }
+  }
+
+  // Case 3: Legacy receipt with only .pdf on disk -> on-demand render and cache WebP
+  if (hasOriginalPdf && !fs.existsSync(companionWebpPath)) {
+    try {
+      console.log(`[FileRoute] On-demand rendering WebP for legacy PDF receipt ${id}...`);
+      const rawPdf = await fs.promises.readFile(companionPdfPath);
+      const rendered = await renderPdfToImage(rawPdf);
+      await fs.promises.writeFile(companionWebpPath, rendered);
+
+      return new NextResponse(new Uint8Array(rendered), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/webp",
+          "X-Content-Type-Options": "nosniff",
+          "X-Has-Original-Pdf": "true",
+          "Content-Disposition": `inline; filename="${id}.webp"`,
+          "Cache-Control": "private, max-age=86400, stale-while-revalidate=3600",
+        },
+      });
+    } catch (renderErr) {
+      console.warn(`[FileRoute] On-demand PDF render failed for ${id}:`, renderErr);
+    }
+  }
+
+  // Case 4: Standard filePath from receipt.sourceFile
   let filePath: string;
   try {
     filePath = getReceiptFilePath(receipt.sourceFile);
@@ -61,14 +138,15 @@ export async function GET(
 
   try {
     const fileBuffer = await fs.promises.readFile(filePath);
-    const isPdf = receipt.sourceFile.endsWith(".pdf");
+    const isPdf = filePath.endsWith(".pdf");
     const contentType = isPdf ? "application/pdf" : "image/webp";
 
-    return new NextResponse(fileBuffer, {
+    return new NextResponse(new Uint8Array(fileBuffer), {
       status: 200,
       headers: {
         "Content-Type": contentType,
         "X-Content-Type-Options": "nosniff",
+        "X-Has-Original-Pdf": hasOriginalPdf ? "true" : "false",
         "Content-Disposition": `inline; filename="${receipt.sourceFile}"`,
         "Cache-Control": "private, max-age=86400, stale-while-revalidate=3600",
       },

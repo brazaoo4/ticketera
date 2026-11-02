@@ -91,6 +91,7 @@ export interface SerializedReceipt {
   aiProvider: string | null;
   processingMs: number | null;
   sourceFile: string;
+  hasOriginalPdf?: boolean;
   taxBreakdown?: TaxBreakdownBracket[] | null;
   store: SerializedStore;
   items: SerializedReceiptItem[];
@@ -518,6 +519,7 @@ export function ReviewWorkstation({
             <ReceiptViewer
               receiptId={receipt.id}
               sourceFile={receipt.sourceFile}
+              hasOriginalPdf={receipt.hasOriginalPdf}
             />
           </div>
         </div>
@@ -786,6 +788,7 @@ export function ReviewWorkstation({
             <ReceiptViewer
               receiptId={receipt.id}
               sourceFile={receipt.sourceFile}
+              hasOriginalPdf={receipt.hasOriginalPdf}
             />
           </div>
         </div>

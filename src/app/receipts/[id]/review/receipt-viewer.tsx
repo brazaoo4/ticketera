@@ -14,6 +14,7 @@ import {
 interface ReceiptViewerProps {
   receiptId: string;
   sourceFile: string;
+  hasOriginalPdf?: boolean;
   isMobileModal?: boolean;
   onCloseMobileModal?: () => void;
 }
@@ -21,11 +22,12 @@ interface ReceiptViewerProps {
 export function ReceiptViewer({
   receiptId,
   sourceFile,
+  hasOriginalPdf,
 }: ReceiptViewerProps) {
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
 
-  const isPdf = sourceFile.toLowerCase().endsWith(".pdf");
+  const isPdfOrHasPdf = sourceFile.toLowerCase().endsWith(".pdf") || Boolean(hasOriginalPdf);
   const fileUrl = `/api/receipts/${receiptId}/file`;
 
   const handleZoomIn = () => setZoom((prev) => Math.min(prev + 0.25, 3));
@@ -43,12 +45,29 @@ export function ReceiptViewer({
         <div className="flex items-center gap-2 text-zinc-300 font-medium">
           <FileText className="w-3.5 h-3.5 text-emerald-400" />
           <span className="truncate max-w-[140px] sm:max-w-[200px]">
-            {isPdf ? "Original Digital PDF" : "Original Scanned Photo"}
+            {isPdfOrHasPdf ? "Digital PDF Receipt" : "Original Scanned Photo"}
           </span>
+          {isPdfOrHasPdf && (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono">
+              PDF
+            </span>
+          )}
         </div>
 
         {/* Zoom & Rotate Toolbar */}
         <div className="flex items-center gap-1">
+          {isPdfOrHasPdf && (
+            <a
+              href={`${fileUrl}?original=true`}
+              download={`receipt-${receiptId}.pdf`}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-emerald-400 text-[11px] font-medium transition-colors mr-1"
+              title="Download original PDF"
+              aria-label="Download original PDF"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Original PDF</span>
+            </a>
+          )}
           <button
             type="button"
             onClick={handleZoomOut}
@@ -105,52 +124,19 @@ export function ReceiptViewer({
 
       {/* Viewer Canvas Area */}
       <div className="relative flex-1 min-h-[460px] max-h-[75vh] overflow-auto bg-zinc-950 p-4 flex items-center justify-center select-none">
-        {isPdf ? (
-          <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-emerald-400 shadow-lg">
-              <FileText className="w-8 h-8" />
-            </div>
-            <div>
-              <h4 className="text-sm font-semibold text-zinc-200">Digital PDF Receipt</h4>
-              <p className="text-xs text-zinc-500 max-w-xs mt-1">
-                Parsed with digital character fidelity. Open or download to inspect original PDF structure.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <a
-                href={fileUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs transition-colors"
-              >
-                <span>View Full PDF</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-              <a
-                href={fileUrl}
-                download
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download</span>
-              </a>
-            </div>
-          </div>
-        ) : (
-          <div
-            className="transition-transform duration-150 ease-out origin-center flex items-center justify-center"
-            style={{
-              transform: `scale(${zoom}) rotate(${rotation}deg)`,
-            }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={fileUrl}
-              alt="Receipt evidence"
-              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl pointer-events-auto"
-            />
-          </div>
-        )}
+        <div
+          className="transition-transform duration-150 ease-out origin-center flex items-center justify-center"
+          style={{
+            transform: `scale(${zoom}) rotate(${rotation}deg)`,
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={fileUrl}
+            alt="Receipt evidence"
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl pointer-events-auto"
+          />
+        </div>
       </div>
     </div>
   );

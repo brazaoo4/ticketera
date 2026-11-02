@@ -2,7 +2,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import sharp from "sharp";
-import { extractTextFromPdf } from "./pdf-extract";
+import { extractTextFromPdf, renderPdfToImage } from "./pdf-extract";
 
 export const UPLOAD_DIR =
   process.env.UPLOAD_DIR ||
@@ -118,11 +118,24 @@ export async function preprocessReceipt(
     buffer.slice(0, 4).toString("ascii") === "%PDF";
 
   if (isPdf) {
-    const fileName = `${receiptId}.pdf`;
-    const fullPath = path.join(UPLOAD_DIR, fileName);
+    const pdfFileName = `${receiptId}.pdf`;
+    const pdfFullPath = path.join(UPLOAD_DIR, pdfFileName);
+    const webpFileName = `${receiptId}.webp`;
+    const webpFullPath = path.join(UPLOAD_DIR, webpFileName);
 
-    await fs.promises.writeFile(fullPath, buffer);
+    // 1. Preserve original PDF on disk for record-keeping and audit
+    await fs.promises.writeFile(pdfFullPath, buffer);
 
+    // 2. Render high-res WebP image for vision AI and review workstation
+    let renderedBuffer: Buffer | null = null;
+    try {
+      renderedBuffer = await renderPdfToImage(buffer);
+      await fs.promises.writeFile(webpFullPath, renderedBuffer);
+    } catch (renderErr) {
+      console.warn(`[Preprocess] PDF rendering to WebP failed for ${receiptId}:`, renderErr);
+    }
+
+    // 3. Extract text if digital text stream is present
     let extractedText: string | null = null;
     try {
       const text = await extractTextFromPdf(buffer);
@@ -130,13 +143,25 @@ export async function preprocessReceipt(
         extractedText = text;
       }
     } catch (pdfErr) {
-      console.warn(`[Preprocess] PDF text extraction failed for ${receiptId}, falling back to vision:`, pdfErr);
+      console.warn(`[Preprocess] PDF text extraction failed for ${receiptId}:`, pdfErr);
     }
 
+    if (renderedBuffer) {
+      return {
+        kind: extractedText ? "pdf-text" : "image",
+        sourceFile: webpFileName,
+        fullPath: webpFullPath,
+        processedBuffer: renderedBuffer,
+        extractedText,
+        mimeType: "image/webp",
+      };
+    }
+
+    // Fallback if rendering failed: keep raw PDF
     return {
       kind: extractedText ? "pdf-text" : "pdf-vision",
-      sourceFile: fileName,
-      fullPath,
+      sourceFile: pdfFileName,
+      fullPath: pdfFullPath,
       processedBuffer: buffer,
       extractedText,
       mimeType: "application/pdf",
