@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.0](https://github.com/brazaoo4/ticketera/compare/v2.2.5...v2.3.0) (2026-11-02)
+
+
+### Features
+
+* **receipts:** support digital PDF receipts with high-res rendering and review workstation ([a68d367](https://github.com/brazaoo4/ticketera/commit/a68d367ab69a61d955b167717ba1518273842f9d))
+* **receipts:** support digital PDF receipts with high-res rendering and review workstation ([16794dc](https://github.com/brazaoo4/ticketera/commit/16794dca34bb695e5e04dd7dc0d835a640170e48))
+
 ## [2.2.5](https://github.com/brazaoo4/ticketera/compare/v2.2.4...v2.2.5) (2026-10-28)
 
 
