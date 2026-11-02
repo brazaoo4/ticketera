@@ -869,6 +869,9 @@ export function UploadClient({
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {selectedFiles.map((file, idx) => {
                   const preview = filePreviews[file.name];
+                  const isPdfFile =
+                    file.type === "application/pdf" ||
+                    file.name.toLowerCase().endsWith(".pdf");
                   return (
                     <div
                       key={`${file.name}-${idx}`}
@@ -882,6 +885,11 @@ export function UploadClient({
                             alt={file.name}
                             className="w-full h-full object-cover"
                           />
+                        </div>
+                      ) : isPdfFile ? (
+                        <div className="w-12 h-14 rounded-lg border border-rose-500/30 bg-rose-500/10 flex flex-col items-center justify-center shrink-0 text-rose-400">
+                          <FileText className="w-5 h-5 stroke-[2]" />
+                          <span className="text-[9px] font-bold font-mono tracking-wider mt-0.5">PDF</span>
                         </div>
                       ) : (
                         <div className="w-12 h-14 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center shrink-0 text-zinc-400">

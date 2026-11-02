@@ -4,7 +4,8 @@ import { prisma } from "@/lib/db";
 import { getReceiptFilePath, compressReceiptImage } from "@/lib/receipts/preprocess";
 import { parseReceiptWithFailover, InvalidReceiptError } from "@/lib/ai/parse-receipt";
 import fs from "fs";
-import { extractTextFromPdf } from "@/lib/receipts/pdf-extract";
+import path from "path";
+import { extractTextFromPdf, renderPdfToImage } from "@/lib/receipts/pdf-extract";
 import { Prisma } from "@prisma/client";
 
 export const SPANISH_TO_ENGLISH_CATEGORIES: Record<string, string> = {
@@ -155,20 +156,53 @@ export async function processReceiptJob(
       throw new Error(`Receipt ${receiptId} not found in database`);
     }
 
-    // Step 3: Load file from disk
-    const filePath = getReceiptFilePath(receipt.sourceFile);
+    // Step 3: Load file from disk with robust PDF-to-WebP companion resolution
+    const uploadDir =
+      process.env.UPLOAD_DIR ||
+      (process.env.NODE_ENV === "production"
+        ? "/app/uploads"
+        : path.join(process.cwd(), "uploads"));
+
+    let filePath = getReceiptFilePath(receipt.sourceFile);
+    let isPdf = receipt.sourceFile.endsWith(".pdf");
+    const companionPdfPath = path.join(uploadDir, `${receiptId}.pdf`);
+    const companionWebpPath = path.join(uploadDir, `${receiptId}.webp`);
+
+    // Legacy or direct PDF support: if source is PDF, ensure WebP companion exists for vision failover
+    if (isPdf && !fs.existsSync(companionWebpPath) && fs.existsSync(filePath)) {
+      try {
+        const rawPdf = await fs.promises.readFile(filePath);
+        const renderedWebp = await renderPdfToImage(rawPdf);
+        await fs.promises.writeFile(companionWebpPath, renderedWebp);
+        filePath = companionWebpPath;
+        isPdf = false;
+      } catch (renderErr) {
+        console.warn(`[Worker] PDF to WebP rendering fallback warning for ${receiptId}:`, renderErr);
+      }
+    } else if (isPdf && fs.existsSync(companionWebpPath)) {
+      filePath = companionWebpPath;
+      isPdf = false;
+    }
+
     if (!fs.existsSync(filePath)) {
       throw new Error(`File ${filePath} not found on disk`);
     }
 
     const fileBuffer = await fs.promises.readFile(filePath);
-    const isPdf = receipt.sourceFile.endsWith(".pdf");
-    const mimeType = isPdf ? "application/pdf" : "image/webp";
+    const mimeType = filePath.endsWith(".pdf") ? "application/pdf" : "image/webp";
 
+    // Attempt text extraction from companion PDF or current file if genuine text is present
     let extractedText: string | null = null;
-    if (isPdf) {
+    const targetPdfForText = fs.existsSync(companionPdfPath)
+      ? companionPdfPath
+      : receipt.sourceFile.endsWith(".pdf")
+      ? filePath
+      : null;
+
+    if (targetPdfForText) {
       try {
-        const text = await extractTextFromPdf(fileBuffer);
+        const pdfBuf = await fs.promises.readFile(targetPdfForText);
+        const text = await extractTextFromPdf(pdfBuf);
         if (text && text.length >= 40) {
           extractedText = text;
         }

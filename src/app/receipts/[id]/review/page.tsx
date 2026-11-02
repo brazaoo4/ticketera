@@ -1,4 +1,6 @@
 import React from "react";
+import fs from "fs";
+import path from "path";
 import { requireAuthUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
@@ -139,6 +141,15 @@ export default async function ReceiptReviewPage({
   const nextPendingId = pendingReviewReceipts[0]?.id || null;
   const pendingReviewCount = pendingReviewReceipts.length;
 
+  const uploadDir =
+    process.env.UPLOAD_DIR ||
+    (process.env.NODE_ENV === "production"
+      ? "/app/uploads"
+      : path.join(process.cwd(), "uploads"));
+  const hasOriginalPdf =
+    receipt.sourceFile.toLowerCase().endsWith(".pdf") ||
+    fs.existsSync(path.join(uploadDir, `${receipt.id}.pdf`));
+
   // Serialize Decimal objects to plain numbers for client component props
   const serializedReceipt: SerializedReceipt = {
     id: receipt.id,
@@ -149,6 +160,7 @@ export default async function ReceiptReviewPage({
     aiProvider: receipt.aiProvider,
     processingMs: receipt.processingMs,
     sourceFile: receipt.sourceFile,
+    hasOriginalPdf,
     taxBreakdown: Array.isArray(receipt.taxBreakdown)
       ? (receipt.taxBreakdown as Array<{ rate: number; baseAmount: number; taxAmount: number }>).map((t) => ({
           rate: Number(t.rate) || 0,
