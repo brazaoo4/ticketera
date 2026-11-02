@@ -47,6 +47,7 @@ COPY --from=builder /app/prisma.config.ts* ./
 # Copy standalone output and static assets
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/node_modules/@napi-rs ./node_modules/@napi-rs
 
 USER 1000:1000
 

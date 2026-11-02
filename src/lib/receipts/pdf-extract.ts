@@ -1,11 +1,55 @@
 import sharp from "sharp";
 
 /**
+ * Ensures browser Canvas/DOM globals are present in Node.js runtime,
+ * preventing pdfjs-dist from throwing "ReferenceError: DOMMatrix is not defined".
+ */
+export function ensureCanvasGlobals() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const canvas = require("@napi-rs/canvas");
+    if (!globalThis.DOMMatrix && canvas.DOMMatrix) globalThis.DOMMatrix = canvas.DOMMatrix;
+    if (!globalThis.ImageData && canvas.ImageData) globalThis.ImageData = canvas.ImageData;
+    if (!globalThis.Path2D && canvas.Path2D) globalThis.Path2D = canvas.Path2D;
+  } catch {
+    // In headless or minimal environments without native canvas, use safe stubs
+  }
+
+  if (typeof globalThis.DOMMatrix === "undefined") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    globalThis.DOMMatrix = class DOMMatrix {
+      a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+    } as any;
+  }
+  if (typeof globalThis.ImageData === "undefined") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    globalThis.ImageData = class ImageData {
+      width: number;
+      height: number;
+      data: Uint8ClampedArray;
+      constructor(w: number, h: number) {
+        this.width = w;
+        this.height = h;
+        this.data = new Uint8ClampedArray(w * h * 4);
+      }
+    } as any;
+  }
+  if (typeof globalThis.Path2D === "undefined") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    globalThis.Path2D = class Path2D {} as any;
+  }
+}
+
+// Ensure globals exist on module evaluation
+ensureCanvasGlobals();
+
+/**
  * Safe PDF text extractor utility
  * Supports pdf-parse v2 (class PDFParse) and fallback
  */
 export async function extractTextFromPdf(buffer: Buffer): Promise<string | null> {
   if (!buffer || buffer.length < 4) return null;
+  ensureCanvasGlobals();
   const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
 
@@ -41,6 +85,7 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<string | null>
  * Multi-page PDFs are vertically composited into a single continuous receipt.
  */
 export async function renderPdfToImage(buffer: Buffer): Promise<Buffer> {
+  ensureCanvasGlobals();
   const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
 

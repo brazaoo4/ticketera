@@ -21,6 +21,7 @@
     "demo:clear": "tsx src/lib/demo/cli.ts clear"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.100",
     "@prisma/adapter-pg": "^7.10.1",
     "@prisma/client": "^7.10.1",
     "@types/pdf-parse": "^1.1.5",

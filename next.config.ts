@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "sharp",
     "pdf-parse",
+    "@napi-rs/canvas",
+    "pdfjs-dist",
     "bullmq",
     "ioredis",
     "bcrypt",

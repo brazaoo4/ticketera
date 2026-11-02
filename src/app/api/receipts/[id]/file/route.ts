@@ -55,21 +55,35 @@ export async function GET(
 
   const companionPdfPath = path.join(uploadDir, `${id}.pdf`);
   const companionWebpPath = path.join(uploadDir, `${id}.webp`);
-  const hasOriginalPdf = fs.existsSync(companionPdfPath);
+
+  let sourceFilePath: string | null = null;
+  try {
+    sourceFilePath = getReceiptFilePath(receipt.sourceFile);
+  } catch {
+    sourceFilePath = null;
+  }
+
+  const effectivePdfPath = fs.existsSync(companionPdfPath)
+    ? companionPdfPath
+    : (sourceFilePath && receipt.sourceFile.toLowerCase().endsWith(".pdf") && fs.existsSync(sourceFilePath)
+      ? sourceFilePath
+      : null);
+  const hasOriginalPdf = Boolean(effectivePdfPath);
 
   const url = req.nextUrl;
   const wantOriginal = url.searchParams.get("original") === "true";
+  const wantDownload = url.searchParams.get("download") === "true";
 
   // Case 1: Client explicitly requested the pristine original PDF
-  if (wantOriginal && hasOriginalPdf) {
+  if (wantOriginal && effectivePdfPath) {
     try {
-      const pdfBuffer = await fs.promises.readFile(companionPdfPath);
+      const pdfBuffer = await fs.promises.readFile(effectivePdfPath);
       return new NextResponse(new Uint8Array(pdfBuffer), {
         status: 200,
         headers: {
           "Content-Type": "application/pdf",
           "X-Content-Type-Options": "nosniff",
-          "Content-Disposition": `attachment; filename="receipt-${id}.pdf"`,
+          "Content-Disposition": `${wantDownload ? "attachment" : "inline"}; filename="receipt-${id}.pdf"`,
           "Cache-Control": "private, max-age=86400",
         },
       });
@@ -98,11 +112,11 @@ export async function GET(
     }
   }
 
-  // Case 3: Legacy receipt with only .pdf on disk -> on-demand render and cache WebP
-  if (hasOriginalPdf && !fs.existsSync(companionWebpPath)) {
+  // Case 3: Receipt with PDF on disk -> on-demand render and cache WebP
+  if (effectivePdfPath && !fs.existsSync(companionWebpPath)) {
     try {
-      console.log(`[FileRoute] On-demand rendering WebP for legacy PDF receipt ${id}...`);
-      const rawPdf = await fs.promises.readFile(companionPdfPath);
+      console.log(`[FileRoute] On-demand rendering WebP for PDF receipt ${id}...`);
+      const rawPdf = await fs.promises.readFile(effectivePdfPath);
       const rendered = await renderPdfToImage(rawPdf);
       await fs.promises.writeFile(companionWebpPath, rendered);
 
@@ -122,14 +136,7 @@ export async function GET(
   }
 
   // Case 4: Standard filePath from receipt.sourceFile
-  let filePath: string;
-  try {
-    filePath = getReceiptFilePath(receipt.sourceFile);
-  } catch {
-    return NextResponse.json({ error: "Invalid file path" }, { status: 400 });
-  }
-
-  if (!fs.existsSync(filePath)) {
+  if (!sourceFilePath || !fs.existsSync(sourceFilePath)) {
     return NextResponse.json(
       { error: "Stored file not found on disk" },
       { status: 404 }
@@ -137,8 +144,8 @@ export async function GET(
   }
 
   try {
-    const fileBuffer = await fs.promises.readFile(filePath);
-    const isPdf = filePath.endsWith(".pdf");
+    const fileBuffer = await fs.promises.readFile(sourceFilePath);
+    const isPdf = sourceFilePath.endsWith(".pdf");
     const contentType = isPdf ? "application/pdf" : "image/webp";
 
     return new NextResponse(new Uint8Array(fileBuffer), {
