@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/brazaoo4/ticketera/compare/v2.3.0...v2.3.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **receipts:** resolve canvas DOMMatrix polyfill and enhance PDF preview in review workstation ([#16](https://github.com/brazaoo4/ticketera/issues/16)) ([1bf2fda](https://github.com/brazaoo4/ticketera/commit/1bf2fda4112f96a75cbd60e77b315c5a48c5e37c))
+
 ## [2.3.0](https://github.com/brazaoo4/ticketera/compare/v2.2.5...v2.3.0) (2026-11-02)
 
 
