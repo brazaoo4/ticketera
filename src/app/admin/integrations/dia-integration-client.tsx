@@ -262,8 +262,8 @@ export function DiaIntegrationClient({
             </div>
 
             {/* Top Action Button */}
-            <div>
-              {diaConnection ? (
+            {diaConnection && (
+              <div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleSyncNow(diaConnection.id)}
@@ -287,16 +287,8 @@ export function DiaIntegrationClient({
                     <span>Update Token</span>
                   </button>
                 </div>
-              ) : (
-                <button
-                  onClick={() => setIsModalOpen(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs shadow-lg shadow-red-600/30 active:scale-95 transition-all"
-                >
-                  <Link2 className="w-4 h-4" />
-                  <span>Connect Dia Account</span>
-                </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Connection Details or Setup Pitch */}
@@ -443,7 +435,7 @@ export function DiaIntegrationClient({
                   Connect your Dia / Club Dia account
                 </h4>
                 <p className="text-xs text-zinc-400 leading-relaxed">
-                  No 24/7 Chromium container required. Connect once with your browser session cookies or cURL snippet; Ticketera automatically maintains your session alive via lightweight keep-alive requests and ingests tickets within minutes of checkout.
+                  Connect your Dia account to automatically sync and import digital receipts from your in-store and online purchases.
                 </p>
               </div>
               <div className="pt-2">
@@ -539,69 +531,80 @@ export function DiaIntegrationClient({
 
             {/* TAB 1: Click "Ver ticket" (Fastest & 100% Reliable) */}
             {instructionTab === "clickTicket" && (
-              <div className="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800/80 space-y-3.5 text-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800/60 pb-2.5">
-                  <div className="font-semibold text-zinc-200 flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[11px] font-bold">1</span>
-                    <span>Go to your Dia Tickets page:</span>
+              <div className="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800/80 space-y-2.5 text-xs">
+                {/* Step 1 */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800/50">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[11px] font-bold shrink-0">
+                      1
+                    </span>
+                    <span className="text-zinc-200 font-medium">
+                      Open your Dia Tickets page:
+                    </span>
                   </div>
                   <a
                     href="https://www.dia.es/my-account/tickets"
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 text-[11px] font-medium transition-colors w-fit"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 text-[11px] font-medium transition-colors w-fit shrink-0 self-start sm:self-center"
                   >
-                    <span>Open dia.es/my-account/tickets</span>
+                    <span>dia.es/my-account/tickets</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-0.5">
-                  <div className="space-y-2.5">
-                    <div className="flex items-start gap-2">
-                      <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">2</span>
-                      <div>
-                        <span className="text-zinc-200 font-medium">Open Developer Tools:</span>
-                        <p className="text-zinc-400 mt-0.5">
-                          Press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 font-mono text-[10px]">F12</kbd> (or right-click ➔ Inspect), then click the <span className="text-zinc-200 font-medium">Network</span> tab.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2">
-                      <span className="w-5 h-5 rounded-full bg-amber-500 text-black flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5 animate-pulse">3</span>
-                      <div>
-                        <span className="text-amber-300 font-semibold">Click &quot;Ver ticket&quot; on any receipt:</span>
-                        <p className="text-zinc-400 mt-0.5">
-                          On the Dia page, click the black <strong className="text-white bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700">&quot;Ver ticket&quot;</strong> button on any of your purchases.
-                        </p>
-                        <p className="text-[11px] text-zinc-500 mt-1">
-                          (Dia loads the page on the server, so refreshing makes no request. Clicking &quot;Ver ticket&quot; forces the browser to fetch the active receipt from the API!)
-                        </p>
-                      </div>
-                    </div>
+                {/* Step 2 */}
+                <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800/50">
+                  <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
+                    2
+                  </span>
+                  <div>
+                    <span className="text-zinc-200 font-medium">Open Developer Tools:</span>
+                    <span className="text-zinc-400 ml-1.5">
+                      Press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 font-mono text-[10px]">F12</kbd> (or right-click anywhere ➔ <span className="text-zinc-300 font-medium">Inspect</span>), then click the <span className="text-zinc-200 font-medium">Network</span> tab.
+                    </span>
                   </div>
+                </div>
 
-                  <div className="space-y-2.5">
-                    <div className="flex items-start gap-2">
-                      <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">4</span>
-                      <div>
-                        <span className="text-zinc-200 font-medium">Look at the Network tab:</span>
-                        <p className="text-zinc-400 mt-0.5">
-                          A request starting with your ticket number (e.g. <span className="text-emerald-300 font-mono font-bold">166477?begin=...</span> or <span className="text-emerald-300 font-mono font-bold">tickets/...</span>) will immediately appear at the bottom!
-                        </p>
-                      </div>
-                    </div>
+                {/* Step 3 */}
+                <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                  <span className="w-5 h-5 rounded-full bg-amber-500 text-black flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5 animate-pulse">
+                    3
+                  </span>
+                  <div>
+                    <span className="text-amber-300 font-semibold">Click &quot;Ver ticket&quot; on any receipt:</span>
+                    <p className="text-zinc-400 mt-0.5">
+                      On the Dia page, click the black <strong className="text-white bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700 font-semibold">&quot;Ver ticket&quot;</strong> button on any purchase card.
+                    </p>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      (Dia loads the page on the server, so refreshing produces no network request. Clicking &quot;Ver ticket&quot; immediately triggers the live API request!)
+                    </p>
+                  </div>
+                </div>
 
-                    <div className="flex items-start gap-2">
-                      <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">5</span>
-                      <div>
-                        <span className="text-zinc-200 font-medium">Right-click & Copy as cURL:</span>
-                        <p className="text-zinc-400 mt-0.5">
-                          Right-click that request ➔ <span className="text-zinc-200 font-medium">Copy</span> ➔ <span className="text-zinc-200 font-medium">Copy as cURL</span> (Windows CMD, PowerShell, or Bash).
-                        </p>
-                      </div>
-                    </div>
+                {/* Step 4 */}
+                <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800/50">
+                  <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
+                    4
+                  </span>
+                  <div>
+                    <span className="text-zinc-200 font-medium">Look at the Network tab:</span>
+                    <span className="text-zinc-400 ml-1.5">
+                      A request starting with your ticket number (e.g. <span className="text-emerald-300 font-mono font-bold">166477?begin=...</span> or <span className="text-emerald-300 font-mono font-bold">tickets/...</span>) will immediately appear at the bottom!
+                    </span>
+                  </div>
+                </div>
+
+                {/* Step 5 */}
+                <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800/50">
+                  <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
+                    5
+                  </span>
+                  <div>
+                    <span className="text-zinc-200 font-medium">Right-click & Copy as cURL:</span>
+                    <span className="text-zinc-400 ml-1.5">
+                      Right-click that request ➔ <span className="text-zinc-200 font-medium">Copy</span> ➔ <span className="text-emerald-400 font-semibold">Copy as cURL</span> (Windows CMD, PowerShell, or Bash), then paste it below.
+                    </span>
                   </div>
                 </div>
 

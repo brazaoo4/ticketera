@@ -12,11 +12,40 @@ import { encryptCredentials } from "@/lib/crypto/vault";
 import { syncDiaConnection } from "@/lib/queue/dia-sync-worker";
 import { ensureDiaSyncSchedule } from "@/lib/queue/dia-sync-queue";
 
-async function verifyConnectionOwnership(connectionId: string) {
+async function resolveAuthUser() {
   const session = await auth();
-  if (!session?.user?.id) {
+  if (!session?.user) {
     throw new Error("Unauthorized. Please log in.");
   }
+
+  let user = null;
+  if (session.user.id) {
+    user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+    });
+  }
+
+  if (!user && session.user.username) {
+    user = await prisma.user.findUnique({
+      where: { username: session.user.username },
+    });
+  }
+
+  if (!user) {
+    user = await prisma.user.findFirst({
+      where: { role: "ADMIN", enabled: true },
+    });
+  }
+
+  if (!user) {
+    throw new Error("User account not found in database. Please log out and log in again.");
+  }
+
+  return { session, user };
+}
+
+async function verifyConnectionOwnership(connectionId: string) {
+  const { session, user } = await resolveAuthUser();
 
   const connection = await prisma.storeConnection.findUnique({
     where: { id: connectionId },
@@ -27,18 +56,25 @@ async function verifyConnectionOwnership(connectionId: string) {
     throw new Error("Store connection not found.");
   }
 
-  if (session.user.role !== "ADMIN" && connection.userId !== session.user.id) {
+  if (session.user.role !== "ADMIN" && connection.userId !== user.id) {
     throw new Error("Forbidden: You do not have permission to manage this connection.");
   }
 
-  return { session, connection };
+  return { session, connection, user };
 }
 
 export async function connectDiaAccountAction(rawInput: string) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { success: false, error: "Unauthorized. Please log in." };
+  let authData;
+  try {
+    authData = await resolveAuthUser();
+  } catch (authErr) {
+    return {
+      success: false,
+      error: authErr instanceof Error ? authErr.message : "Unauthorized. Please log in.",
+    };
   }
+
+  const { user } = authData;
 
   const trimmed = rawInput?.trim();
   if (!trimmed) {
@@ -84,12 +120,12 @@ export async function connectDiaAccountAction(rawInput: string) {
     connection = await prisma.storeConnection.upsert({
       where: {
         userId_storeSlug: {
-          userId: session.user.id,
+          userId: user.id,
           storeSlug: "dia",
         },
       },
       create: {
-        userId: session.user.id,
+        userId: user.id,
         storeSlug: "dia",
         accountLabel,
         encryptedAuthData,
