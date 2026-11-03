@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ShoppingBag, Shield, Settings } from "lucide-react";
+import { ShoppingBag, Shield, Settings, Link2 } from "lucide-react";
 
 export function AdminHeaderTabs() {
   const pathname = usePathname();
@@ -20,6 +20,12 @@ export function AdminHeaderTabs() {
       href: "/admin/users",
       icon: Shield,
       active: pathname.startsWith("/admin/users"),
+    },
+    {
+      label: "Integrations",
+      href: "/admin/integrations",
+      icon: Link2,
+      active: pathname.startsWith("/admin/integrations"),
     },
     {
       label: "Product Catalogue",

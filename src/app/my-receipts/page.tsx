@@ -45,6 +45,17 @@ export default async function MyReceiptsPage() {
     console.warn("[MyReceipts] Could not load user receipts from DB:", error);
   }
 
+  let diaConn: { id: string; status: string; totalSyncedCount: number } | null = null;
+  try {
+    const conn = await prisma.storeConnection.findFirst({
+      where: { userId: session.user.id, storeSlug: "dia", syncEnabled: true },
+      select: { id: true, status: true, totalSyncedCount: true },
+    });
+    diaConn = conn;
+  } catch {
+    // ignore
+  }
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "CONFIRMED":
@@ -100,6 +111,27 @@ export default async function MyReceiptsPage() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          {diaConn && (
+            <Link
+              href="/admin/integrations"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 transition-colors shadow-sm"
+              title="Dia Auto-Sync is Active"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  diaConn.status === "ACTIVE"
+                    ? "bg-emerald-400 animate-pulse"
+                    : diaConn.status === "REQUIRES_REAUTH"
+                    ? "bg-amber-400"
+                    : "bg-blue-400 animate-pulse"
+                }`}
+              />
+              <span className="font-medium text-white">Dia Synced</span>
+              <span className="text-[10px] font-mono text-zinc-400">
+                ({diaConn.totalSyncedCount})
+              </span>
+            </Link>
+          )}
           <ExportDataMenu range="all" />
           <Link
             href="/upload"
