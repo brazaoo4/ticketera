@@ -14,13 +14,12 @@ import {
   ShieldCheck,
   Receipt,
   ArrowUpRight,
-  Filter,
   Copy,
   Check,
   Terminal,
   Key,
-  Database,
-  Search,
+  MousePointerClick,
+  Sparkles,
 } from "lucide-react";
 import {
   connectDiaAccountAction,
@@ -62,12 +61,11 @@ export function DiaIntegrationClient({
     ) || connections.find((c) => c.storeSlug === "dia");
   const [isPending, startTransition] = useTransition();
 
-  const [instructionTab, setInstructionTab] = useState<"network" | "storage" | "manual">("network");
+  const [instructionTab, setInstructionTab] = useState<"clickTicket" | "console" | "manual">("clickTicket");
   const [rawInput, setRawInput] = useState("");
   const [manualSessionId, setManualSessionId] = useState("");
   const [manualCustomerAccess, setManualCustomerAccess] = useState("");
   const [manualCustomerCode, setManualCustomerCode] = useState("");
-  const [copiedFilter, setCopiedFilter] = useState(false);
   const [copiedConsole, setCopiedConsole] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -90,15 +88,10 @@ export function DiaIntegrationClient({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isModalOpen, isPending]);
 
-  const copyToClipboard = (text: string, type: "filter" | "console") => {
+  const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    if (type === "filter") {
-      setCopiedFilter(true);
-      setTimeout(() => setCopiedFilter(false), 2000);
-    } else {
-      setCopiedConsole(true);
-      setTimeout(() => setCopiedConsole(false), 2000);
-    }
+    setCopiedConsole(true);
+    setTimeout(() => setCopiedConsole(false), 2000);
   };
 
   const handleConnect = () => {
@@ -505,29 +498,29 @@ export function DiaIntegrationClient({
             <div className="grid grid-cols-3 gap-1.5 p-1 bg-zinc-950/80 rounded-xl border border-zinc-800/80 text-xs">
               <button
                 type="button"
-                onClick={() => setInstructionTab("network")}
+                onClick={() => setInstructionTab("clickTicket")}
                 className={`flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg font-medium transition-all ${
-                  instructionTab === "network"
+                  instructionTab === "clickTicket"
                     ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60"
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60"
                 }`}
               >
-                <Filter className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span className="truncate">DevTools Filter</span>
+                <MousePointerClick className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="truncate">Click &quot;Ver ticket&quot;</span>
                 <span className="hidden sm:inline-block text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">Fastest</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setInstructionTab("storage")}
+                onClick={() => setInstructionTab("console")}
                 className={`flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg font-medium transition-all ${
-                  instructionTab === "storage"
+                  instructionTab === "console"
                     ? "bg-zinc-800 text-white shadow-sm border border-zinc-700/60"
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60"
                 }`}
               >
-                <Database className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                <span className="truncate">Storage Cookies</span>
+                <Terminal className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <span className="truncate">Console 1-Liner</span>
               </button>
 
               <button
@@ -544,21 +537,21 @@ export function DiaIntegrationClient({
               </button>
             </div>
 
-            {/* TAB 1: DevTools Filter Method */}
-            {instructionTab === "network" && (
+            {/* TAB 1: Click "Ver ticket" (Fastest & 100% Reliable) */}
+            {instructionTab === "clickTicket" && (
               <div className="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800/80 space-y-3.5 text-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800/60 pb-2.5">
                   <div className="font-semibold text-zinc-200 flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[11px] font-bold">1</span>
-                    <span>Go to Dia Tickets in your browser:</span>
+                    <span>Go to your Dia Tickets page:</span>
                   </div>
                   <a
-                    href="https://www.dia.es/mis-compras/tickets"
+                    href="https://www.dia.es/my-account/tickets"
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 text-[11px] font-medium transition-colors w-fit"
                   >
-                    <span>Open dia.es/mis-compras/tickets</span>
+                    <span>Open dia.es/my-account/tickets</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>
@@ -576,20 +569,15 @@ export function DiaIntegrationClient({
                     </div>
 
                     <div className="flex items-start gap-2">
-                      <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">3</span>
+                      <span className="w-5 h-5 rounded-full bg-amber-500 text-black flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5 animate-pulse">3</span>
                       <div>
-                        <span className="text-zinc-200 font-medium">Filter out 200+ noise requests:</span>
+                        <span className="text-amber-300 font-semibold">Click &quot;Ver ticket&quot; on any receipt:</span>
                         <p className="text-zinc-400 mt-0.5">
-                          Select <span className="text-zinc-200 font-medium">Fetch/XHR</span> and type <code className="text-amber-300 font-bold font-mono bg-amber-500/10 px-1 py-0.5 rounded border border-amber-500/20">tickets</code> in the Filter box.
+                          On the Dia page, click the black <strong className="text-white bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700">&quot;Ver ticket&quot;</strong> button on any of your purchases.
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard("tickets", "filter")}
-                          className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-mono border border-zinc-700 transition-colors"
-                        >
-                          {copiedFilter ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedFilter ? "Copied 'tickets'!" : "Copy 'tickets' filter word"}</span>
-                        </button>
+                        <p className="text-[11px] text-zinc-500 mt-1">
+                          (Dia loads the page on the server, so refreshing makes no request. Clicking &quot;Ver ticket&quot; forces the browser to fetch the active receipt from the API!)
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -598,9 +586,9 @@ export function DiaIntegrationClient({
                     <div className="flex items-start gap-2">
                       <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">4</span>
                       <div>
-                        <span className="text-zinc-200 font-medium">Refresh the page:</span>
+                        <span className="text-zinc-200 font-medium">Look at the Network tab:</span>
                         <p className="text-zinc-400 mt-0.5">
-                          Press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 font-mono text-[10px]">Ctrl+R</kbd> or <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 font-mono text-[10px]">F5</kbd>. DevTools will now show <strong>only 1 request</strong>!
+                          A request starting with your ticket number (e.g. <span className="text-emerald-300 font-mono font-bold">166477?begin=...</span> or <span className="text-emerald-300 font-mono font-bold">tickets/...</span>) will immediately appear at the bottom!
                         </p>
                       </div>
                     </div>
@@ -610,94 +598,97 @@ export function DiaIntegrationClient({
                       <div>
                         <span className="text-zinc-200 font-medium">Right-click & Copy as cURL:</span>
                         <p className="text-zinc-400 mt-0.5">
-                          Right-click <span className="text-emerald-300 font-mono font-bold">tickets?offset=0...</span> ➔ <span className="text-zinc-200 font-medium">Copy</span> ➔ <span className="text-zinc-200 font-medium">Copy as cURL</span>.
+                          Right-click that request ➔ <span className="text-zinc-200 font-medium">Copy</span> ➔ <span className="text-zinc-200 font-medium">Copy as cURL</span> (Windows CMD, PowerShell, or Bash).
                         </p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* DevTools Visual Mockup */}
+                {/* Visual Workflow Mockup */}
                 <div className="rounded-lg bg-zinc-900 border border-zinc-800 overflow-hidden text-[11px] font-mono shadow-inner">
-                  <div className="px-3 py-1.5 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between text-zinc-400 flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-amber-500/50 text-amber-300">
-                        <Search className="w-3 h-3 text-amber-400" />
-                        <span className="font-bold">tickets</span>
+                  <div className="px-3 py-1.5 bg-zinc-950 border-b border-zinc-800 text-zinc-400 text-[10px] uppercase font-bold tracking-wider">
+                    How it looks on your screen:
+                  </div>
+
+                  <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-zinc-950/60 items-center">
+                    {/* Dia Ticket Card Mockup */}
+                    <div className="p-3 rounded-lg bg-white text-zinc-900 space-y-2 shadow">
+                      <div className="text-[10px] text-zinc-500 font-sans font-bold flex items-center justify-between">
+                        <span>Compra - PZ OTELO 3-D</span>
+                        <span>11,79 €</span>
                       </div>
-                      <span className="px-1.5 py-0.5 rounded bg-zinc-800/40 text-zinc-500">All</span>
-                      <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold">Fetch/XHR</span>
+                      <div className="flex items-center gap-2 pt-1 font-sans">
+                        <span className="px-2.5 py-1 rounded bg-zinc-200 text-zinc-700 text-[10px] font-medium">Facturas</span>
+                        <span className="px-3 py-1 rounded bg-zinc-900 text-white text-[10px] font-bold ring-2 ring-amber-400 ring-offset-1 flex items-center gap-1 shadow">
+                          <span>Ver ticket</span>
+                          <span className="text-amber-400">👈 Click</span>
+                        </span>
+                      </div>
                     </div>
-                    <span className="text-[10px] text-zinc-500">DevTools Network Tab Preview</span>
-                  </div>
 
-                  <div className="p-2 space-y-1 bg-zinc-950/60">
-                    <div className="grid grid-cols-12 text-zinc-500 border-b border-zinc-800/60 pb-1 px-2 text-[10px]">
-                      <span className="col-span-7">Name</span>
-                      <span className="col-span-2">Status</span>
-                      <span className="col-span-3 text-right">DevTools Action</span>
-                    </div>
-                    <div className="grid grid-cols-12 items-center px-2 py-1.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
-                      <span className="col-span-7 font-bold truncate flex items-center gap-1">
-                        <span className="text-emerald-400">📄</span> tickets?offset=0&page_size=6
-                      </span>
-                      <span className="col-span-2 text-zinc-400">200 OK</span>
-                      <span className="col-span-3 text-right text-[10px] text-emerald-400 font-bold">
-                        Right-click ➔ Copy as cURL
-                      </span>
+                    {/* DevTools Result Mockup */}
+                    <div className="p-2.5 rounded-lg bg-zinc-900 border border-emerald-500/40 text-emerald-300 space-y-1">
+                      <div className="text-[10px] text-zinc-500 uppercase font-bold">DevTools Network Tab:</div>
+                      <div className="truncate font-bold text-white text-xs">
+                        📄 166477?begin=... <span className="text-emerald-400 font-normal text-[10px]">200 OK</span>
+                      </div>
+                      <div className="text-[10px] text-emerald-400 font-bold animate-pulse pt-0.5">
+                        👉 Right-click ➔ Copy ➔ Copy as cURL
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                {/* Pro-Tip: Instant Console Trigger without Refresh */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800/80 text-[11px] text-zinc-400">
-                  <div className="flex items-center gap-2">
-                    <Terminal className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                    <span>Don&apos;t want to refresh? Run this in DevTools <strong>Console</strong>:</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      copyToClipboard(
-                        "fetch('/api/v3/eservice-back/customer/current/tickets?offset=0&page_size=1')",
-                        "console"
-                      )
-                    }
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono transition-colors shrink-0 w-fit"
-                  >
-                    {copiedConsole ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedConsole ? "Copied Fetch Command!" : "Copy Console Fetch"}</span>
-                  </button>
                 </div>
               </div>
             )}
 
-            {/* TAB 2: Storage Cookies Method */}
-            {instructionTab === "storage" && (
-              <div className="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800/80 space-y-3 text-xs text-zinc-400">
+            {/* TAB 2: Console 1-Liner (No Clicking Needed) */}
+            {instructionTab === "console" && (
+              <div className="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800/80 space-y-3.5 text-xs text-zinc-400">
                 <div className="font-semibold text-zinc-200 text-xs flex items-center gap-2 border-b border-zinc-800/60 pb-2">
-                  <Database className="w-4 h-4 text-blue-400" />
-                  <span>Copy from DevTools Storage / Cookies (No network recording needed):</span>
+                  <Terminal className="w-4 h-4 text-blue-400" />
+                  <span>Trigger the API call directly via DevTools Console:</span>
                 </div>
                 <ol className="list-decimal list-inside space-y-2 leading-relaxed">
                   <li>
                     In{" "}
-                    <a href="https://www.dia.es" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">
-                      dia.es
+                    <a href="https://www.dia.es/my-account/tickets" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">
+                      dia.es/my-account/tickets
                     </a>{" "}
                     while logged in, press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono text-[10px]">F12</kbd>.
                   </li>
                   <li>
-                    Click the <span className="text-zinc-200 font-medium">Application</span> tab (Chrome/Edge/Brave) or <span className="text-zinc-200 font-medium">Storage</span> tab (Firefox).
+                    Click the <span className="text-zinc-200 font-medium">Console</span> tab at the top.
                   </li>
                   <li>
-                    In the left sidebar, expand <span className="text-zinc-200 font-medium">Cookies</span> and click <span className="text-emerald-400 font-mono">https://www.dia.es</span>.
+                    Paste the snippet below and press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono text-[10px]">Enter</kbd>:
+                  </li>
+                </ol>
+
+                <div className="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 font-mono text-[11px] flex items-center justify-between gap-2">
+                  <code className="text-amber-300 truncate">
+                    fetch(&apos;/api/v3/eservice-back/customer/current/tickets?offset=0&amp;page_size=1&apos;)
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyToClipboard(
+                        "fetch('/api/v3/eservice-back/customer/current/tickets?offset=0&page_size=1')"
+                      )
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-sans font-medium transition-colors shrink-0"
+                  >
+                    {copiedConsole ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedConsole ? "Copied!" : "Copy Snippet"}</span>
+                  </button>
+                </div>
+
+                <ol start={4} className="list-decimal list-inside space-y-2 leading-relaxed">
+                  <li>
+                    Switch to the <span className="text-zinc-200 font-medium">Network</span> tab. The request <code className="text-emerald-300 font-mono">tickets?offset=0...</code> is now at the bottom!
                   </li>
                   <li>
-                    <strong className="text-zinc-200">1-Click Full Table Copy:</strong> Click inside the cookie table, press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono text-[10px]">Ctrl+A</kbd> then <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono text-[10px]">Ctrl+C</kbd>, and paste it into the box below. Ticketera parses the table automatically!
-                  </li>
-                  <li>
-                    <strong className="text-zinc-200">Or paste individually:</strong> Switch to the <strong>Manual 3 Fields</strong> tab above and paste <code className="text-zinc-300">session_id</code>, <code className="text-zinc-300">customer_access</code>, and <code className="text-zinc-300">customer_code</code>.
+                    Right-click it ➔ <span className="text-zinc-200 font-medium">Copy</span> ➔ <span className="text-zinc-200 font-medium">Copy as cURL</span>, and paste it below.
                   </li>
                 </ol>
               </div>
@@ -706,8 +697,11 @@ export function DiaIntegrationClient({
             {/* TAB 3: Manual 3 Fields Input */}
             {instructionTab === "manual" ? (
               <div className="space-y-3.5">
-                <div className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800/80 text-xs text-zinc-400">
-                  Paste the 3 Dia session values individually from DevTools (Application ➔ Cookies ➔ dia.es):
+                <div className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800/80 text-xs text-zinc-400 space-y-1">
+                  <p className="text-zinc-200 font-medium">Enter your 3 Dia session tokens:</p>
+                  <p className="text-[11px] text-zinc-500">
+                    Note: <code className="text-zinc-400">customer_access</code> is a 500+ character JWT (starts with <code className="text-zinc-400">eyJhbGciOi...</code>). If your DevTools cookie view truncates or hides it, use Tab 1 (&quot;Ver ticket&quot;) above which extracts all 3 fields automatically from your cURL command.
+                  </p>
                 </div>
 
                 <div className="space-y-3">
@@ -726,7 +720,7 @@ export function DiaIntegrationClient({
 
                   <div>
                     <label className="text-xs font-semibold text-zinc-300 block mb-1">
-                      2. customer_access <span className="text-zinc-500 font-normal font-mono">(Long JWT string starting with eyJhbGci...)</span>
+                      2. customer_access <span className="text-zinc-500 font-normal font-mono">(Full JWT token starting with eyJhbGci...)</span>
                     </label>
                     <textarea
                       value={manualCustomerAccess}
@@ -756,7 +750,7 @@ export function DiaIntegrationClient({
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-zinc-300 block">
-                    Paste cURL command, PowerShell snippet, cookie string, or copied DevTools table:
+                    Paste your copied cURL command or cookie string:
                   </label>
                   {rawInput && (
                     <button
@@ -839,7 +833,7 @@ export function DiaIntegrationClient({
                   </div>
                 ) : (
                   <p className="text-[11px] text-zinc-500">
-                    Ticketera automatically extracts <code className="text-zinc-400">session_id</code>, <code className="text-zinc-400">customer_access</code>, and <code className="text-zinc-400">customer_code</code> from any cURL, PowerShell, Fetch snippet, cookie header, or DevTools cookie table.
+                    Ticketera automatically extracts <code className="text-zinc-400">session_id</code>, <code className="text-zinc-400">customer_access</code>, and <code className="text-zinc-400">customer_code</code> from any cURL, PowerShell, Fetch snippet, or cookie header.
                   </p>
                 )}
               </div>
