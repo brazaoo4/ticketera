@@ -12,6 +12,7 @@ import {
   decryptVaultJson,
 } from "../src/lib/crypto/vault";
 import { renderDiaTicketToWebp } from "../src/lib/integrations/dia/render-ticket";
+import { inferSpanishGroceryCategory } from "../src/lib/integrations/dia/importer";
 import { DiaTicketDetailResponse, DiaTicketSummary } from "../src/lib/integrations/dia/types";
 import { UPLOAD_DIR } from "../src/lib/receipts/preprocess";
 
@@ -56,6 +57,47 @@ test("parseDiaAuthInput throws descriptive error when mandatory tokens are missi
     () => parseDiaAuthInput("session_id=only-session"),
     /Missing .*credentials/
   );
+});
+
+test("parseDiaAuthInput correctly parses PowerShell WebRequestSession Cookie syntax", () => {
+  const input = `
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$session.Cookies.Add((New-Object System.Net.Cookie("session_id", "ps-sess-111", "/", ".dia.es")))
+$session.Cookies.Add((New-Object System.Net.Cookie("customer_access", "ps-jwt-222", "/", ".dia.es")))
+$session.Cookies.Add((New-Object System.Net.Cookie("customer_code", "ps-code-333=", "/", ".dia.es")))
+Invoke-WebRequest -UseBasicParsing -Uri "https://www.dia.es/api/v3/eservice-back/customer/current/tickets" -WebSession $session
+  `;
+  const creds = parseDiaAuthInput(input);
+  assert.equal(creds.sessionId, "ps-sess-111");
+  assert.equal(creds.customerAccess, "ps-jwt-222");
+  assert.equal(creds.customerCode, "ps-code-333=");
+});
+
+test("parseDiaAuthInput correctly parses DevTools table / key: value lines", () => {
+  const input = `
+session_id: kv-sess-001
+customer_access: kv-jwt-002
+customer_code\tkv-code-003=
+  `;
+  const creds = parseDiaAuthInput(input);
+  assert.equal(creds.sessionId, "kv-sess-001");
+  assert.equal(creds.customerAccess, "kv-jwt-002");
+  assert.equal(creds.customerCode, "kv-code-003=");
+});
+
+test("inferSpanishGroceryCategory classifies Spanish POS items and discount hints", () => {
+  assert.equal(inferSpanishGroceryCategory("PECHUGA POLLO ENTERA"), "Meat & Poultry");
+  assert.equal(inferSpanishGroceryCategory("CARNE PICADA VACUNO"), "Meat & Poultry");
+  assert.equal(inferSpanishGroceryCategory("CERV BOT FRANZISKANE"), "Beverages");
+  assert.equal(inferSpanishGroceryCategory("RED BULL SIN AZÚCAR"), "Beverages");
+  assert.equal(inferSpanishGroceryCategory("HÉLICES COCCIÓN 3MIN"), "Pantry");
+  assert.equal(inferSpanishGroceryCategory("GOMINOLAS MORAS"), "Pantry");
+  assert.equal(inferSpanishGroceryCategory("SALSA AGRIDULCE MAGG"), "Oils & Condiments");
+  assert.equal(
+    inferSpanishGroceryCategory("PRODUCTO ESPECIAL", ["15 % Fruta y verdura"]),
+    "Fruits & Vegetables"
+  );
+  assert.equal(inferSpanishGroceryCategory("BOLSA PLASTICO 70%"), "Other");
 });
 
 test("encryptVaultJson and decryptVaultJson perform authenticated roundtrip", () => {

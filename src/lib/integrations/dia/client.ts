@@ -53,15 +53,29 @@ export function parseDiaAuthInput(rawInput: string): DiaAuthCredentials {
     }
   }
 
-  // 2. Clean up Windows CMD escape characters (`^"`, `^^`, etc.)
-  const normalized = trimmed.replace(/\^([\"\'&%^])/g, "$1");
+  // 2. Clean up Windows CMD escape characters (`^"`, `^^`, etc.) and multiline continuations
+  const normalized = trimmed
+    .replace(/\^\r?\n/g, " ")
+    .replace(/\\\r?\n/g, " ")
+    .replace(/\^([\"\'&%^])/g, "$1");
 
-  // Helper regex to extract specific cookie value
+  // Helper regex to extract specific cookie value across cURL, PowerShell, DevTools table, or key=value/key:value
   const extractCookie = (name: string): string | null => {
-    // Matches name=value until semicolon, quote, newline, or end of string
-    const regex = new RegExp(`(?:^|[;\\s\"\'&])${name}=([^;\"\'\\s\r\n&]+)`, "i");
-    const match = normalized.match(regex);
-    return match ? match[1].trim() : null;
+    // 2a. PowerShell WebRequestSession format: Cookie("name", "value"...)
+    const psRegex = new RegExp(
+      `Cookie\\(\\s*["']${name}["']\\s*,\\s*["']([^"']+)["']`,
+      "i"
+    );
+    const psMatch = normalized.match(psRegex);
+    if (psMatch?.[1]) return psMatch[1].trim();
+
+    // 2b. Standard cookie / header / key=value / key:value / DevTools tab-separated row
+    const stdRegex = new RegExp(
+      `(?:^|[;\\s\"\'&])${name}\\s*(?:=|:|\\t)\\s*([^;\"\'\\s\\r\\n&]+)`,
+      "i"
+    );
+    const stdMatch = normalized.match(stdRegex);
+    return stdMatch?.[1] ? stdMatch[1].trim() : null;
   };
 
   const sessionId = extractCookie("session_id");
@@ -210,6 +224,7 @@ export async function fetchDiaTicketsPage(
   const res = await fetch(url, {
     method: "GET",
     headers: buildDiaHeaders(creds),
+    signal: AbortSignal.timeout(15_000),
   });
 
   // Dia returns 222 with { location: "https://www.dia.es/login" } or similar when unauthenticated
@@ -253,6 +268,7 @@ export async function fetchDiaTicketDetail(
   const res = await fetch(url, {
     method: "GET",
     headers: buildDiaHeaders(creds),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (res.status === 222 || res.status === 401 || res.status === 403) {

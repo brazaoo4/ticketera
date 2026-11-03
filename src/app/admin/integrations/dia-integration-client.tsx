@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useState, useTransition, useEffect } from "react";
+import Link from "next/link";
 import {
   Link2,
   RefreshCw,
@@ -10,10 +11,9 @@ import {
   AlertTriangle,
   Clock,
   ExternalLink,
-  ChevronRight,
   ShieldCheck,
   Receipt,
-  Copy,
+  ArrowUpRight,
 } from "lucide-react";
 import {
   connectDiaAccountAction,
@@ -48,15 +48,30 @@ export function DiaIntegrationClient({
   connections,
   currentUserId,
 }: DiaIntegrationClientProps) {
-  const diaConnection = connections.find((c) => c.storeSlug === "dia");
+  const diaConnection =
+    connections.find(
+      (c) => c.storeSlug === "dia" && c.user.id === currentUserId
+    ) || connections.find((c) => c.storeSlug === "dia");
   const [isPending, startTransition] = useTransition();
 
   const [rawInput, setRawInput] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [actionMessage, setActionMessage] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isPending) {
+        setIsModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isModalOpen, isPending]);
 
   const handleConnect = () => {
     if (!rawInput.trim()) return;
@@ -65,11 +80,17 @@ export function DiaIntegrationClient({
     startTransition(async () => {
       const res = await connectDiaAccountAction(rawInput);
       if (res.success) {
-        setActionMessage({ type: "success", text: res.message || "Connected successfully!" });
+        setActionMessage({
+          type: "success",
+          text: res.message || "Connected successfully!",
+        });
         setRawInput("");
         setIsModalOpen(false);
       } else {
-        setActionMessage({ type: "error", text: res.error || "Failed to connect." });
+        setActionMessage({
+          type: "error",
+          text: res.error || "Failed to connect.",
+        });
       }
     });
   };
@@ -106,12 +127,10 @@ export function DiaIntegrationClient({
   };
 
   const handleDisconnect = (id: string) => {
-    if (!confirm("Are you sure you want to disconnect this Dia account? Existing imported receipts will remain.")) {
-      return;
-    }
     setActionMessage(null);
     startTransition(async () => {
       const res = await disconnectDiaAccountAction(id);
+      setConfirmDisconnect(false);
       if (res.success) {
         setActionMessage({
           type: "success",
@@ -261,18 +280,24 @@ export function DiaIntegrationClient({
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase flex items-center gap-1.5">
-                    <Receipt className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Total Synced</span>
+                <Link
+                  href="/my-receipts"
+                  className="group p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 hover:border-emerald-500/40 hover:bg-zinc-900/80 transition-all space-y-1 block"
+                >
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Receipt className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Total Synced</span>
+                    </span>
+                    <ArrowUpRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-emerald-400 transition-colors" />
                   </div>
                   <div className="text-xl font-bold font-mono text-white">
                     {diaConnection.totalSyncedCount}
                   </div>
-                  <div className="text-[11px] font-mono text-zinc-500">
-                    Receipts ingested
+                  <div className="text-[11px] font-mono text-zinc-500 group-hover:text-zinc-300 transition-colors">
+                    View in My Receipts
                   </div>
-                </div>
+                </Link>
 
                 <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
                   <div className="text-[10px] font-mono text-zinc-500 uppercase flex items-center gap-1.5">
@@ -322,7 +347,7 @@ export function DiaIntegrationClient({
 
               {/* Controls Footer */}
               <div className="pt-2 border-t border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs text-zinc-400">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <button
                     onClick={() => handleToggleSync(diaConnection.id, diaConnection.syncEnabled)}
                     disabled={isPending}
@@ -334,21 +359,41 @@ export function DiaIntegrationClient({
                   >
                     <Power className="w-3.5 h-3.5" />
                     <span>
-                      {diaConnection.syncEnabled ? "Automatic Sync: ON" : "Automatic Sync: PAUSED"}
+                      {diaConnection.syncEnabled ? "Automatic Sync: ON" : "Automatic Sync: PAUSED (Keepalive Active)"}
                     </span>
                   </button>
-                  <span className="text-zinc-600">•</span>
-                  <span>Tokens are AES-256-GCM encrypted at rest</span>
+                  <span className="text-zinc-600 hidden sm:inline">•</span>
+                  <span>AES-256-GCM encrypted at rest</span>
                 </div>
 
-                <button
-                  onClick={() => handleDisconnect(diaConnection.id)}
-                  disabled={isPending}
-                  className="inline-flex items-center gap-1.5 text-zinc-500 hover:text-rose-400 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Disconnect Account</span>
-                </button>
+                {confirmDisconnect ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-rose-400 font-medium">Disconnect account?</span>
+                    <button
+                      onClick={() => handleDisconnect(diaConnection.id)}
+                      disabled={isPending}
+                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold transition-colors"
+                    >
+                      Yes, Disconnect
+                    </button>
+                    <button
+                      onClick={() => setConfirmDisconnect(false)}
+                      disabled={isPending}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDisconnect(true)}
+                    disabled={isPending}
+                    className="inline-flex items-center gap-1.5 text-zinc-500 hover:text-rose-400 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Disconnect Account</span>
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -380,7 +425,14 @@ export function DiaIntegrationClient({
 
       {/* 1-Time Setup Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isPending) {
+              setIsModalOpen(false);
+            }
+          }}
+        >
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
               <div className="flex items-center gap-3">
@@ -392,7 +444,7 @@ export function DiaIntegrationClient({
                     {diaConnection ? "Update Dia Credentials" : "Connect Dia Account"}
                   </h3>
                   <p className="text-xs text-zinc-400">
-                    Paste your browser cURL command or cookie string
+                    Paste your browser cURL command, PowerShell snippet, or cookie string
                   </p>
                 </div>
               </div>
@@ -434,7 +486,7 @@ export function DiaIntegrationClient({
             {/* Input Box */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-zinc-300 block">
-                Paste cURL command, cookie string, or JSON credentials:
+                Paste cURL command, PowerShell snippet, cookie string, or JSON credentials:
               </label>
               <textarea
                 value={rawInput}
@@ -464,7 +516,7 @@ export function DiaIntegrationClient({
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs shadow-lg shadow-red-600/30 disabled:opacity-50 active:scale-95 transition-all"
               >
                 {isPending && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                <span>{isPending ? "Validating & Connecting..." : "Save & Connect"}</span>
+                <span>{isPending ? "Validating & Syncing..." : "Save & Connect"}</span>
               </button>
             </div>
           </div>

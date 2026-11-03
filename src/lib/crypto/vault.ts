@@ -5,11 +5,22 @@ const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
 function getEncryptionKey(): Buffer {
-  const secret =
-    process.env.AUTH_SECRET ||
-    process.env.NEXTAUTH_SECRET ||
-    "ticketera-dev-fallback-vault-secret-key-32b";
-  return crypto.createHash("sha256").update(secret).digest();
+  const configuredSecret =
+    process.env.AUTH_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim();
+
+  if (!configuredSecret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "CRITICAL: AUTH_SECRET or NEXTAUTH_SECRET must be set in production to encrypt store credentials."
+      );
+    }
+    return crypto
+      .createHash("sha256")
+      .update("ticketera-dev-fallback-vault-secret-key-32b")
+      .digest();
+  }
+
+  return crypto.createHash("sha256").update(configuredSecret).digest();
 }
 
 /**

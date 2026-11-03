@@ -38,26 +38,13 @@ export async function renderDiaTicketToWebp(
   );
 
   const width = 640;
-  const items = detail.corporate?.items || [];
+  const items = (detail.corporate?.items || []).filter((i) => !i.cancel);
   const taxes = detail.corporate?.taxes || [];
-  const discounts = items.flatMap((i) => i.discounts || []);
-
-  // Compute dynamic height based on lines
-  const headerHeight = 240;
-  const itemsHeight = items.length * 44 + discounts.length * 28;
-  const totalsHeight = 160;
-  const taxesHeight = 40 + taxes.length * 24;
-  const footerHeight = 160;
-  const totalHeight = Math.max(
-    800,
-    headerHeight + itemsHeight + totalsHeight + taxesHeight + footerHeight
-  );
 
   let currentY = 50;
 
   // Header SVG
   let svgContent = `
-    <rect width="${width}" height="${totalHeight}" fill="#fafafa" rx="12" />
     <style>
       .brand { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; font-size: 32px; font-weight: 900; fill: #D52B1E; letter-spacing: 2px; }
       .title { font-family: monospace; font-size: 14px; fill: #52525b; text-anchor: middle; }
@@ -208,7 +195,8 @@ export async function renderDiaTicketToWebp(
     <text x="${width / 2}" y="${(currentY += 18)}" class="item-sub" text-anchor="middle">Ticketera Automated Grocery Sync</text>
   `;
 
-  const finalSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${totalHeight}">${svgContent}</svg>`;
+  const totalHeight = Math.max(600, currentY + 45);
+  const finalSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${totalHeight}"><rect width="${width}" height="${totalHeight}" fill="#fafafa" rx="12" />${svgContent}</svg>`;
   const webpPath = path.join(UPLOAD_DIR, `${receiptId}.webp`);
 
   await sharp(Buffer.from(finalSvg))

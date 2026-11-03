@@ -20,7 +20,17 @@ export default async function AdminIntegrationsPage() {
   }
 
   const connections = await prisma.storeConnection.findMany({
-    include: {
+    select: {
+      id: true,
+      storeSlug: true,
+      accountLabel: true,
+      syncEnabled: true,
+      status: true,
+      lastSyncAt: true,
+      lastKeepAliveAt: true,
+      lastTicketDate: true,
+      totalSyncedCount: true,
+      lastError: true,
       user: {
         select: { id: true, username: true },
       },

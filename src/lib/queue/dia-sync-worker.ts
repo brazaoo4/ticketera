@@ -7,9 +7,9 @@ import {
   DiaTicketDetailParams,
 } from "@/lib/integrations/dia/types";
 import {
+  DiaSessionExpiredError,
   fetchDiaTicketsPage,
   fetchDiaTicketDetail,
-  extractRotatedCredentials,
   getDiaAccountLabel,
 } from "@/lib/integrations/dia/client";
 import { importDiaTicket } from "@/lib/integrations/dia/importer";
@@ -17,11 +17,19 @@ import { ensureDiaSyncSchedule } from "./dia-sync-queue";
 
 const globalForDiaWorker = globalThis as unknown as {
   diaSyncWorker?: Worker;
+  activeSyncLocks?: Set<string>;
 };
+
+const activeSyncLocks =
+  globalForDiaWorker.activeSyncLocks || new Set<string>();
+if (process.env.NODE_ENV !== "production") {
+  globalForDiaWorker.activeSyncLocks = activeSyncLocks;
+}
 
 export interface SyncDiaResult {
   success: boolean;
   skipped?: boolean;
+  keepAliveOnly?: boolean;
   requiresReauth?: boolean;
   importedCount?: number;
   skippedCount?: number;
@@ -29,157 +37,217 @@ export interface SyncDiaResult {
 }
 
 /**
- * Synchronizes tickets for a single Dia store connection:
+ * Synchronizes tickets (or performs a lightweight session keep-alive) for a single Dia store connection:
  * 1. Decrypts credentials.
- * 2. Fetches tickets page (offset 0, limit 12).
- * 3. Rotates session_id and customer_access cookies automatically.
- * 4. Imports new tickets deterministically without OCR.
- * 5. Handles 401/403 session expiration by transitioning status to REQUIRES_REAUTH.
+ * 2. Fetches tickets page and immediately persists rotated session_id / customer_access cookies.
+ * 3. If syncEnabled is false (and not a manual force sync), stops after keep-alive so the 1-time session stays alive.
+ * 4. Imports new tickets deterministically with per-ticket error isolation.
+ * 5. Handles 222/401/403 session expiration by transitioning status to REQUIRES_REAUTH.
  */
-export async function syncDiaConnection(connectionId: string): Promise<SyncDiaResult> {
-  const connection = await prisma.storeConnection.findUnique({
-    where: { id: connectionId },
-  });
-
-  if (!connection) {
-    return { success: false, skipped: true, error: `Connection ${connectionId} not found` };
-  }
-
-  if (!connection.syncEnabled) {
-    return { success: false, skipped: true, error: "Connection sync is disabled" };
-  }
-
-  console.log(`[DiaWorker] Starting sync for connection ${connectionId} (${connection.accountLabel || "Dia"})...`);
-
-  // Transition to SYNCING
-  await prisma.storeConnection.update({
-    where: { id: connectionId },
-    data: { status: "SYNCING" },
-  });
-
-  let currentCreds: DiaAuthCredentials;
-  try {
-    currentCreds = decryptCredentials<DiaAuthCredentials>(connection.encryptedAuthData);
-  } catch (decErr) {
-    const errorMsg = "Failed to decrypt credentials. Vault key mismatch or corrupted secret.";
-    console.error(`[DiaWorker] ❌ ${errorMsg}:`, decErr);
-    await prisma.storeConnection.update({
-      where: { id: connectionId },
-      data: { status: "REQUIRES_REAUTH", lastError: errorMsg },
-    });
-    return { success: false, requiresReauth: true, error: errorMsg };
-  }
-
-  try {
-    // 1. Fetch recent tickets page
-    const pageRes = await fetchDiaTicketsPage(currentCreds, { offset: 0, pageSize: 12 });
-
-    // 2. Capture any rotated tokens from response headers
-    if (pageRes.rotatedCreds) {
-      currentCreds = pageRes.rotatedCreds;
-    }
-
-    const accountLabel = getDiaAccountLabel(
-      currentCreds.customerAccess,
-      pageRes.data.customer?.display_name || connection.accountLabel || undefined
-    );
-
-    const tickets = pageRes.data.tickets || [];
-    let importedCount = 0;
-    let skippedCount = 0;
-    let latestTicketDate: Date | null = connection.lastTicketDate;
-
-    // 3. Process tickets
-    for (const ticket of tickets) {
-      const ticketDate = new Date(ticket.submitted_date || ticket.detail_params?.begin || Date.now());
-      if (!latestTicketDate || ticketDate > latestTicketDate) {
-        latestTicketDate = ticketDate;
-      }
-
-      const existing = await prisma.receipt.findFirst({
-        where: { externalTicketId: ticket.ticket_unique_code },
-        select: { id: true },
-      });
-
-      if (existing) {
-        skippedCount++;
-        continue;
-      }
-
-      console.log(
-        `[DiaWorker] 📥 Fetching details for new Dia ticket: ${ticket.ticket_unique_code} (${ticket.total_amount} €)`
-      );
-
-      const detailRes = await fetchDiaTicketDetail(
-        currentCreds,
-        ticket.detail_params as DiaTicketDetailParams
-      );
-
-      if (detailRes.rotatedCreds) {
-        currentCreds = detailRes.rotatedCreds;
-      }
-
-      await importDiaTicket({
-        userId: connection.userId,
-        summary: ticket,
-        detail: detailRes.data,
-      });
-
-      importedCount++;
-    }
-
-    // 4. Persist updated rotated credentials & mark ACTIVE
-    await prisma.storeConnection.update({
-      where: { id: connectionId },
-      data: {
-        status: "ACTIVE",
-        accountLabel,
-        encryptedAuthData: encryptCredentials(currentCreds),
-        lastSyncAt: new Date(),
-        lastKeepAliveAt: new Date(),
-        lastTicketDate: latestTicketDate,
-        totalSyncedCount: { increment: importedCount },
-        lastError: null,
-      },
-    });
-
-    console.log(
-      `[DiaWorker] ✓ Connection ${connectionId} synced successfully: ${importedCount} imported, ${skippedCount} skipped.`
-    );
-
+export async function syncDiaConnection(
+  connectionId: string,
+  options?: { forceImport?: boolean }
+): Promise<SyncDiaResult> {
+  if (activeSyncLocks.has(connectionId)) {
     return {
       success: true,
-      importedCount,
-      skippedCount,
+      skipped: true,
+      importedCount: 0,
+      skippedCount: 0,
     };
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    const isAuthError =
-      errorMsg.includes("401") ||
-      errorMsg.includes("403") ||
-      errorMsg.toLowerCase().includes("unauthorized") ||
-      errorMsg.toLowerCase().includes("session expired");
+  }
 
-    console.error(`[DiaWorker] ❌ Sync error for connection ${connectionId}:`, errorMsg);
+  activeSyncLocks.add(connectionId);
 
-    await prisma.storeConnection.update({
+  try {
+    const connection = await prisma.storeConnection.findUnique({
       where: { id: connectionId },
-      data: {
-        status: isAuthError ? "REQUIRES_REAUTH" : "FAILED",
-        lastError: errorMsg,
-      },
     });
 
-    return {
-      success: false,
-      requiresReauth: isAuthError,
-      error: errorMsg,
-    };
+    if (!connection) {
+      return { success: false, skipped: true, error: `Connection ${connectionId} not found` };
+    }
+
+    const shouldImportTickets = Boolean(connection.syncEnabled || options?.forceImport);
+
+    let currentCreds: DiaAuthCredentials;
+    try {
+      currentCreds = decryptCredentials<DiaAuthCredentials>(connection.encryptedAuthData);
+    } catch (decErr) {
+      const errorMsg = "Failed to decrypt credentials. Vault key mismatch or corrupted secret.";
+      console.error(`[DiaWorker] ❌ ${errorMsg}:`, decErr);
+      await prisma.storeConnection.update({
+        where: { id: connectionId },
+        data: { status: "REQUIRES_REAUTH", lastError: errorMsg },
+      });
+      return { success: false, requiresReauth: true, error: errorMsg };
+    }
+
+    if (shouldImportTickets) {
+      await prisma.storeConnection.update({
+        where: { id: connectionId },
+        data: { status: "SYNCING" },
+      });
+    }
+
+    try {
+      // 1. Fetch tickets page (pageSize 1 if keep-alive only, 12 if full sync)
+      const pageRes = await fetchDiaTicketsPage(currentCreds, {
+        offset: 0,
+        pageSize: shouldImportTickets ? 12 : 1,
+      });
+
+      // 2. Immediately capture and persist rotated tokens so a later error never loses the rotated session
+      if (pageRes.rotatedCreds) {
+        currentCreds = pageRes.rotatedCreds;
+      }
+
+      const accountLabel = getDiaAccountLabel(
+        currentCreds.customerAccess,
+        pageRes.data.customer?.display_name || connection.accountLabel || undefined
+      );
+
+      await prisma.storeConnection.update({
+        where: { id: connectionId },
+        data: {
+          accountLabel,
+          encryptedAuthData: encryptCredentials(currentCreds),
+          lastKeepAliveAt: new Date(),
+          ...(shouldImportTickets ? {} : { status: "ACTIVE", lastError: null }),
+        },
+      });
+
+      if (!shouldImportTickets) {
+        console.log(
+          `[DiaWorker] 💓 Keep-alive heartbeat completed for paused connection ${connectionId}`
+        );
+        return {
+          success: true,
+          keepAliveOnly: true,
+          importedCount: 0,
+          skippedCount: 0,
+        };
+      }
+
+      const tickets = pageRes.data.tickets || [];
+      let importedCount = 0;
+      let skippedCount = 0;
+      let latestTicketDate: Date | null = connection.lastTicketDate;
+      let lastTicketError: string | null = null;
+
+      // 3. Process tickets with per-ticket isolation
+      for (const ticket of tickets) {
+        const ticketDate = new Date(
+          ticket.submitted_date || ticket.detail_params?.begin || Date.now()
+        );
+        if (!latestTicketDate || ticketDate > latestTicketDate) {
+          latestTicketDate = ticketDate;
+        }
+
+        const existing = await prisma.receipt.findFirst({
+          where: { externalTicketId: ticket.ticket_unique_code },
+          select: { id: true },
+        });
+
+        if (existing) {
+          skippedCount++;
+          continue;
+        }
+
+        try {
+          console.log(
+            `[DiaWorker] 📥 Fetching details for new Dia ticket: ${ticket.ticket_unique_code} (${ticket.total_amount} €)`
+          );
+
+          const detailRes = await fetchDiaTicketDetail(
+            currentCreds,
+            ticket.detail_params as DiaTicketDetailParams
+          );
+
+          if (detailRes.rotatedCreds) {
+            currentCreds = detailRes.rotatedCreds;
+          }
+
+          const importRes = await importDiaTicket({
+            userId: connection.userId,
+            summary: ticket,
+            detail: detailRes.data,
+          });
+
+          if (importRes.status === "IMPORTED") {
+            importedCount++;
+          } else {
+            skippedCount++;
+          }
+        } catch (ticketErr) {
+          if (ticketErr instanceof DiaSessionExpiredError) {
+            throw ticketErr;
+          }
+          lastTicketError =
+            ticketErr instanceof Error ? ticketErr.message : String(ticketErr);
+          console.error(
+            `[DiaWorker] ⚠️ Failed to import ticket ${ticket.ticket_unique_code}:`,
+            lastTicketError
+          );
+        }
+      }
+
+      // 4. Persist final rotated credentials & mark ACTIVE
+      await prisma.storeConnection.update({
+        where: { id: connectionId },
+        data: {
+          status: "ACTIVE",
+          accountLabel,
+          encryptedAuthData: encryptCredentials(currentCreds),
+          lastSyncAt: new Date(),
+          lastKeepAliveAt: new Date(),
+          lastTicketDate: latestTicketDate,
+          totalSyncedCount: { increment: importedCount },
+          lastError: lastTicketError,
+        },
+      });
+
+      console.log(
+        `[DiaWorker] ✓ Connection ${connectionId} synced: ${importedCount} imported, ${skippedCount} skipped.`
+      );
+
+      return {
+        success: true,
+        importedCount,
+        skippedCount,
+      };
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const isAuthError =
+        err instanceof DiaSessionExpiredError ||
+        /\b(222|401|403)\b/.test(errorMsg) ||
+        errorMsg.toLowerCase().includes("unauthorized") ||
+        errorMsg.toLowerCase().includes("expired");
+
+      console.error(`[DiaWorker] ❌ Sync error for connection ${connectionId}:`, errorMsg);
+
+      await prisma.storeConnection.update({
+        where: { id: connectionId },
+        data: {
+          encryptedAuthData: encryptCredentials(currentCreds),
+          status: isAuthError ? "REQUIRES_REAUTH" : "FAILED",
+          lastError: errorMsg,
+        },
+      });
+
+      return {
+        success: false,
+        requiresReauth: isAuthError,
+        error: errorMsg,
+      };
+    }
+  } finally {
+    activeSyncLocks.delete(connectionId);
   }
 }
 
 /**
- * Synchronizes all active Dia connections across all users.
+ * Synchronizes (and refreshes keep-alive tokens for) all non-expired Dia connections.
  */
 export async function syncAllDiaConnections(): Promise<{
   total: number;
@@ -190,8 +258,7 @@ export async function syncAllDiaConnections(): Promise<{
   const connections = await prisma.storeConnection.findMany({
     where: {
       storeSlug: "dia",
-      syncEnabled: true,
-      status: { not: "FAILED" },
+      status: { not: "REQUIRES_REAUTH" },
     },
     select: { id: true },
   });

@@ -112,25 +112,46 @@ export default async function MyReceiptsPage() {
 
         <div className="flex items-center gap-2.5">
           {diaConn && (
-            <Link
-              href="/admin/integrations"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 transition-colors shadow-sm"
-              title="Dia Auto-Sync is Active"
-            >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  diaConn.status === "ACTIVE"
-                    ? "bg-emerald-400 animate-pulse"
-                    : diaConn.status === "REQUIRES_REAUTH"
-                    ? "bg-amber-400"
-                    : "bg-blue-400 animate-pulse"
-                }`}
-              />
-              <span className="font-medium text-white">Dia Synced</span>
-              <span className="text-[10px] font-mono text-zinc-400">
-                ({diaConn.totalSyncedCount})
-              </span>
-            </Link>
+            session.user.role === "ADMIN" ? (
+              <Link
+                href="/admin/integrations"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 transition-colors shadow-sm"
+                title="Manage Dia Auto-Sync"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    diaConn.status === "ACTIVE"
+                      ? "bg-emerald-400 animate-pulse"
+                      : diaConn.status === "REQUIRES_REAUTH"
+                      ? "bg-amber-400"
+                      : "bg-blue-400 animate-pulse"
+                  }`}
+                />
+                <span className="font-medium text-white">Dia Synced</span>
+                <span className="text-[10px] font-mono text-zinc-400">
+                  ({diaConn.totalSyncedCount})
+                </span>
+              </Link>
+            ) : (
+              <div
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 shadow-sm"
+                title="Dia Auto-Sync is Active"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    diaConn.status === "ACTIVE"
+                      ? "bg-emerald-400 animate-pulse"
+                      : diaConn.status === "REQUIRES_REAUTH"
+                      ? "bg-amber-400"
+                      : "bg-blue-400 animate-pulse"
+                  }`}
+                />
+                <span className="font-medium text-white">Dia Synced</span>
+                <span className="text-[10px] font-mono text-zinc-400">
+                  ({diaConn.totalSyncedCount})
+                </span>
+              </div>
+            )
           )}
           <ExportDataMenu range="all" />
           <Link
@@ -203,7 +224,9 @@ export default async function MyReceiptsPage() {
                   {r.aiProvider && (
                     <span className="flex items-center gap-1 text-[11px] text-zinc-500">
                       <Sparkles className="w-3 h-3 text-emerald-400" />
-                      <span>{r.aiProvider}</span>
+                      <span>
+                        {r.aiProvider === "dia-pos" ? "Club Dia Sync" : r.aiProvider}
+                      </span>
                     </span>
                   )}
                 </div>

@@ -10,7 +10,29 @@ import {
 } from "@/lib/integrations/dia/client";
 import { encryptCredentials } from "@/lib/crypto/vault";
 import { syncDiaConnection } from "@/lib/queue/dia-sync-worker";
-import { triggerDiaSyncNow } from "@/lib/queue/dia-sync-queue";
+import { ensureDiaSyncSchedule } from "@/lib/queue/dia-sync-queue";
+
+async function verifyConnectionOwnership(connectionId: string) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized. Please log in.");
+  }
+
+  const connection = await prisma.storeConnection.findUnique({
+    where: { id: connectionId },
+    select: { id: true, userId: true },
+  });
+
+  if (!connection) {
+    throw new Error("Store connection not found.");
+  }
+
+  if (session.user.role !== "ADMIN" && connection.userId !== session.user.id) {
+    throw new Error("Forbidden: You do not have permission to manage this connection.");
+  }
+
+  return { session, connection };
+}
 
 export async function connectDiaAccountAction(rawInput: string) {
   const session = await auth();
@@ -92,12 +114,16 @@ export async function connectDiaAccountAction(rawInput: string) {
     };
   }
 
-  // Trigger immediate initial sync
+  // Ensure background 35-minute scheduler is active
+  ensureDiaSyncSchedule().catch(() => null);
+
+  // Execute immediate initial sync so tickets are ready right away
+  let importedCount = 0;
   try {
-    await triggerDiaSyncNow(connection.id);
-  } catch {
-    // If BullMQ is offline, run sync directly in background
-    syncDiaConnection(connection.id).catch(console.error);
+    const syncRes = await syncDiaConnection(connection.id, { forceImport: true });
+    importedCount = syncRes.importedCount ?? 0;
+  } catch (syncErr) {
+    console.warn("[DiaConnect] Initial sync warning:", syncErr);
   }
 
   revalidatePath("/admin/integrations");
@@ -105,18 +131,20 @@ export async function connectDiaAccountAction(rawInput: string) {
   return {
     success: true,
     accountLabel,
-    message: `Connected successfully to Club Dia (${accountLabel})! Initial sync started.`,
+    importedCount,
+    message:
+      importedCount > 0
+        ? `Connected to Club Dia (${accountLabel})! Imported ${importedCount} new ${
+            importedCount === 1 ? "receipt" : "receipts"
+          }.`
+        : `Connected successfully to Club Dia (${accountLabel})! All receipts are up to date.`,
   };
 }
 
 export async function syncDiaNowAction(connectionId: string) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { success: false, error: "Unauthorized" };
-  }
-
   try {
-    const res = await syncDiaConnection(connectionId);
+    await verifyConnectionOwnership(connectionId);
+    const res = await syncDiaConnection(connectionId, { forceImport: true });
     revalidatePath("/admin/integrations");
     revalidatePath("/my-receipts");
 
@@ -139,17 +167,14 @@ export async function syncDiaNowAction(connectionId: string) {
 }
 
 export async function toggleDiaSyncAction(connectionId: string, syncEnabled: boolean) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { success: false, error: "Unauthorized" };
-  }
-
   try {
+    await verifyConnectionOwnership(connectionId);
     await prisma.storeConnection.update({
       where: { id: connectionId },
       data: { syncEnabled },
     });
     revalidatePath("/admin/integrations");
+    revalidatePath("/my-receipts");
     return { success: true };
   } catch (err) {
     return {
@@ -160,12 +185,8 @@ export async function toggleDiaSyncAction(connectionId: string, syncEnabled: boo
 }
 
 export async function disconnectDiaAccountAction(connectionId: string) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { success: false, error: "Unauthorized" };
-  }
-
   try {
+    await verifyConnectionOwnership(connectionId);
     await prisma.storeConnection.delete({
       where: { id: connectionId },
     });
