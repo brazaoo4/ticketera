@@ -146,10 +146,16 @@ export async function syncDiaConnection(
 
         const existing = await prisma.receipt.findFirst({
           where: { externalTicketId: ticket.ticket_unique_code },
-          select: { id: true },
+          select: { id: true, userId: true },
         });
 
         if (existing) {
+          if (existing.userId !== connection.userId) {
+            await prisma.receipt.update({
+              where: { id: existing.id },
+              data: { userId: connection.userId },
+            });
+          }
           skippedCount++;
           continue;
         }
