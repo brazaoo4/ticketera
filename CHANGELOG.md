@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/brazaoo4/ticketera/compare/v2.3.1...v2.4.0) (2026-11-04)
+
+
+### Features
+
+* **integrations:** automated Club Dia account integration ([#18](https://github.com/brazaoo4/ticketera/issues/18)) ([033565e](https://github.com/brazaoo4/ticketera/commit/033565e3b57d474faa89cdbb97b6c29f0e6126b1))
+
 ## [2.3.1](https://github.com/brazaoo4/ticketera/compare/v2.3.0...v2.3.1) (2026-11-02)
 
 
