@@ -14,9 +14,11 @@ export default async function MyStatsPage() {
     redirect("/login?callbackUrl=/my-stats");
   }
 
+  const isAdmin = session.user.role === "ADMIN";
+
   const receipts = await prisma.receipt.findMany({
     where: {
-      userId: session.user.id,
+      ...(isAdmin ? {} : { userId: session.user.id }),
       status: "CONFIRMED",
     },
     include: {

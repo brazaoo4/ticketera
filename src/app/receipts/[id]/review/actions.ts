@@ -371,6 +371,7 @@ export async function deleteReceiptAction(receiptId: string) {
       const filesToUnlink = new Set<string>([
         `${receiptId}.webp`,
         `${receiptId}.pdf`,
+        `${receiptId}.json`,
       ]);
       if (existing.sourceFile && existing.sourceFile !== "temp") {
         filesToUnlink.add(path.basename(existing.sourceFile));

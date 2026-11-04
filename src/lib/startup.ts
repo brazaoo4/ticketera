@@ -28,6 +28,8 @@ export async function ensureDatabaseSchema() {
     if (checkResult?.[0]?.exists) {
       console.log("⚡ [Startup] Database tables already exist. Verifying columns...");
       await prisma.$executeRawUnsafe(`ALTER TABLE "Receipt" ADD COLUMN IF NOT EXISTS "taxBreakdown" JSONB;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Receipt" ADD COLUMN IF NOT EXISTS "externalTicketId" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Receipt_externalTicketId_key" ON "Receipt"("externalTicketId");`).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "ProductAlias" ADD COLUMN IF NOT EXISTS "unitMeasurePerPack" DECIMAL(10,3);`).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "ProductAlias" ADD COLUMN IF NOT EXISTS "isVariableWeight" BOOLEAN NOT NULL DEFAULT false;`).catch(() => null);
       await prisma.$executeRawUnsafe(`
@@ -37,6 +39,41 @@ export async function ensureDatabaseSchema() {
           "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
           CONSTRAINT "SystemSetting_pkey" PRIMARY KEY ("key")
         );
+      `).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        DO $$ BEGIN
+          CREATE TYPE "SyncStatus" AS ENUM ('IDLE', 'SYNCING', 'ACTIVE', 'REQUIRES_REAUTH', 'FAILED');
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+        END $$;
+      `).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "StoreConnection" (
+          "id" TEXT NOT NULL,
+          "userId" TEXT NOT NULL,
+          "storeSlug" TEXT NOT NULL,
+          "accountLabel" TEXT,
+          "encryptedAuthData" TEXT NOT NULL,
+          "syncEnabled" BOOLEAN NOT NULL DEFAULT true,
+          "lastSyncAt" TIMESTAMP(3),
+          "lastKeepAliveAt" TIMESTAMP(3),
+          "lastTicketDate" TIMESTAMP(3),
+          "totalSyncedCount" INTEGER NOT NULL DEFAULT 0,
+          "status" "SyncStatus" NOT NULL DEFAULT 'IDLE',
+          "lastError" TEXT,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "StoreConnection_pkey" PRIMARY KEY ("id")
+        );
+      `).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "StoreConnection_userId_storeSlug_key" ON "StoreConnection"("userId", "storeSlug");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "StoreConnection_storeSlug_syncEnabled_idx" ON "StoreConnection"("storeSlug", "syncEnabled");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        DO $$ BEGIN
+          ALTER TABLE "StoreConnection" ADD CONSTRAINT "StoreConnection_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+        END $$;
       `).catch(() => null);
       return;
     }
@@ -54,6 +91,12 @@ export async function ensureDatabaseSchema() {
 
       `DO $$ BEGIN
         CREATE TYPE "ReceiptStatus" AS ENUM ('PENDING', 'PROCESSING', 'REVIEW', 'CONFIRMED', 'FAILED');
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;`,
+
+      `DO $$ BEGIN
+        CREATE TYPE "SyncStatus" AS ENUM ('IDLE', 'SYNCING', 'ACTIVE', 'REQUIRES_REAUTH', 'FAILED');
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$;`,
@@ -90,6 +133,7 @@ export async function ensureDatabaseSchema() {
         "totalAmount" DECIMAL(10,2),
         "sourceFile" TEXT NOT NULL,
         "fileHash" TEXT NOT NULL,
+        "externalTicketId" TEXT,
         "aiProvider" TEXT,
         "processingMs" INTEGER,
         "status" "ReceiptStatus" NOT NULL DEFAULT 'PENDING',
@@ -97,6 +141,24 @@ export async function ensureDatabaseSchema() {
         "taxBreakdown" JSONB,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "Receipt_pkey" PRIMARY KEY ("id")
+      );`,
+
+      `CREATE TABLE IF NOT EXISTS "StoreConnection" (
+        "id" TEXT NOT NULL,
+        "userId" TEXT NOT NULL,
+        "storeSlug" TEXT NOT NULL,
+        "accountLabel" TEXT,
+        "encryptedAuthData" TEXT NOT NULL,
+        "syncEnabled" BOOLEAN NOT NULL DEFAULT true,
+        "lastSyncAt" TIMESTAMP(3),
+        "lastKeepAliveAt" TIMESTAMP(3),
+        "lastTicketDate" TIMESTAMP(3),
+        "totalSyncedCount" INTEGER NOT NULL DEFAULT 0,
+        "status" "SyncStatus" NOT NULL DEFAULT 'IDLE',
+        "lastError" TEXT,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "StoreConnection_pkey" PRIMARY KEY ("id")
       );`,
 
       `CREATE TABLE IF NOT EXISTS "Product" (
@@ -152,6 +214,9 @@ export async function ensureDatabaseSchema() {
       `CREATE UNIQUE INDEX IF NOT EXISTS "Store_name_key" ON "Store"("name");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "Store_slug_key" ON "Store"("slug");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "Receipt_fileHash_key" ON "Receipt"("fileHash");`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS "Receipt_externalTicketId_key" ON "Receipt"("externalTicketId");`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS "StoreConnection_userId_storeSlug_key" ON "StoreConnection"("userId", "storeSlug");`,
+      `CREATE INDEX IF NOT EXISTS "StoreConnection_storeSlug_syncEnabled_idx" ON "StoreConnection"("storeSlug", "syncEnabled");`,
       `CREATE INDEX IF NOT EXISTS "Receipt_storeId_purchaseDate_idx" ON "Receipt"("storeId", "purchaseDate" DESC);`,
       `CREATE INDEX IF NOT EXISTS "Receipt_userId_purchaseDate_idx" ON "Receipt"("userId", "purchaseDate" DESC);`,
       `CREATE INDEX IF NOT EXISTS "Receipt_status_idx" ON "Receipt"("status");`,
@@ -164,6 +229,12 @@ export async function ensureDatabaseSchema() {
 
       `DO $$ BEGIN
         ALTER TABLE "Receipt" ADD CONSTRAINT "Receipt_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;`,
+
+      `DO $$ BEGIN
+        ALTER TABLE "StoreConnection" ADD CONSTRAINT "StoreConnection_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$;`,

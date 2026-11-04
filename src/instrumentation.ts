@@ -6,6 +6,9 @@ export async function register() {
     if (process.env.NEXT_PHASE !== "phase-production-build") {
       const { initReceiptWorker } = await import("@/lib/queue/receipt-worker");
       initReceiptWorker();
+
+      const { initDiaSyncWorker } = await import("@/lib/queue/dia-sync-worker");
+      initDiaSyncWorker();
     }
   }
 }

@@ -19,6 +19,14 @@ enum ReceiptStatus {
   FAILED
 }
 
+enum SyncStatus {
+  IDLE
+  SYNCING
+  ACTIVE
+  REQUIRES_REAUTH
+  FAILED
+}
+
 enum BaseUnit {
   KG
   L
@@ -26,13 +34,14 @@ enum BaseUnit {
 }
 
 model User {
-  id        String    @id @default(cuid())
-  username  String    @unique
-  password  String
-  role      Role      @default(USER)
-  enabled   Boolean   @default(true)
-  receipts  Receipt[]
-  createdAt DateTime  @default(now())
+  id               String            @id @default(cuid())
+  username         String            @unique
+  password         String
+  role             Role              @default(USER)
+  enabled          Boolean           @default(true)
+  receipts         Receipt[]
+  storeConnections StoreConnection[]
+  createdAt        DateTime          @default(now())
 }
 
 model Store {
@@ -52,9 +61,10 @@ model Receipt {
   store        Store         @relation(fields: [storeId], references: [id])
   purchaseDate DateTime
   totalAmount  Decimal?      @db.Decimal(10, 2)
-  sourceFile   String
-  fileHash     String        @unique
-  aiProvider   String?
+  sourceFile       String
+  fileHash         String        @unique
+  externalTicketId String?       @unique
+  aiProvider       String?
   processingMs Int?
   status       ReceiptStatus @default(PENDING)
   errorMessage String?
@@ -128,5 +138,26 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model StoreConnection {
+  id                String     @id @default(cuid())
+  userId            String
+  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeSlug         String     // e.g. "dia"
+  accountLabel      String?    // e.g. "Bruno (#1032187140)"
+  encryptedAuthData String     // AES-256-GCM encrypted JSON: { sessionId, customerAccess, customerCode }
+  syncEnabled       Boolean    @default(true)
+  lastSyncAt        DateTime?
+  lastKeepAliveAt   DateTime?
+  lastTicketDate    DateTime?
+  totalSyncedCount  Int        @default(0)
+  status            SyncStatus @default(IDLE)
+  lastError         String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@unique([userId, storeSlug])
+  @@index([storeSlug, syncEnabled])
 }
 

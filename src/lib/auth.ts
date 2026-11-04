@@ -19,6 +19,39 @@ export interface AuthenticatedUser {
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
+  callbacks: {
+    ...authConfig.callbacks,
+    async session({ session, token }) {
+      if (token && session.user) {
+        session.user.id = (token.id as string) || session.user.id;
+        session.user.username = (token.username as string) || (token.name as string) || session.user.username;
+        session.user.role = (token.role as "ADMIN" | "USER") || "USER";
+
+        // Heal stale token.id from previous database instances or migrations
+        try {
+          const uname = (session.user.username || session.user.name || undefined) as string | undefined;
+          const dbUser = await prisma.user.findFirst({
+            where: {
+              OR: [
+                ...(session.user.id ? [{ id: session.user.id }] : []),
+                ...(uname ? [{ username: uname }] : []),
+              ],
+            },
+            select: { id: true, username: true, role: true, enabled: true },
+          });
+
+          if (dbUser && dbUser.enabled) {
+            session.user.id = dbUser.id;
+            session.user.username = dbUser.username;
+            session.user.role = dbUser.role as "ADMIN" | "USER";
+          }
+        } catch {
+          // Fall back gracefully
+        }
+      }
+      return session;
+    },
+  },
   providers: [
     Credentials({
       name: "Credentials",
@@ -118,14 +151,32 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
  */
 export async function requireAuthUser(): Promise<AuthenticatedUser> {
   const session = await auth();
-  if (!session?.user?.id) {
+  if (!session?.user) {
     throw new Error("Unauthorized");
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { id: true, username: true, role: true, enabled: true },
-  });
+  let user = null;
+  if (session.user.id) {
+    user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { id: true, username: true, role: true, enabled: true },
+    });
+  }
+
+  const uname = (session.user.username || session.user.name || undefined) as string | undefined;
+  if (!user && uname) {
+    user = await prisma.user.findUnique({
+      where: { username: uname },
+      select: { id: true, username: true, role: true, enabled: true },
+    });
+  }
+
+  if (!user && session.user.role === "ADMIN") {
+    user = await prisma.user.findFirst({
+      where: { role: "ADMIN", enabled: true },
+      select: { id: true, username: true, role: true, enabled: true },
+    });
+  }
 
   if (!user || !user.enabled) {
     throw new Error("Unauthorized");
