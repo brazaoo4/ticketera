@@ -4,9 +4,16 @@ import fs from "fs";
 import path from "path";
 import sharp from "sharp";
 import {
+  DiaSessionExpiredError,
   parseDiaAuthInput,
   getDiaAccountLabel,
+  getDiaJwtExpiration,
 } from "../src/lib/integrations/dia/client";
+import {
+  getDiaSyncIntervalMinutes,
+  isDiaAuthError,
+  resolveDiaSyncFailureDecision,
+} from "../src/lib/integrations/dia/sync-policy";
 import {
   encryptVaultJson,
   decryptVaultJson,
@@ -242,4 +249,80 @@ test("renderDiaTicketToWebp outputs high-contrast legible companion WebP and JSO
   // Cleanup test artifacts
   await fs.promises.unlink(webpPath).catch(() => {});
   await fs.promises.unlink(jsonPath).catch(() => {});
+});
+
+test("getDiaJwtExpiration extracts exp claim from valid JWTs and handles invalid inputs", () => {
+  const payload = Buffer.from(JSON.stringify({ exp: 1800000000 })).toString("base64url");
+  const jwt = `eyJhbGciOiJSUzI1NiJ9.${payload}.sig`;
+  const exp = getDiaJwtExpiration(jwt);
+  assert.ok(exp instanceof Date);
+  assert.equal(exp.getTime(), 1800000000 * 1000);
+
+  const noExpPayload = Buffer.from(JSON.stringify({ sub: "123" })).toString("base64url");
+  assert.equal(getDiaJwtExpiration(`eyJhbGciOiJub25lIn0.${noExpPayload}.sig`), null);
+  assert.equal(getDiaJwtExpiration("not-a-jwt"), null);
+});
+
+test("getDiaSyncIntervalMinutes defaults to 10 and clamps safely inside session TTL", () => {
+  assert.equal(getDiaSyncIntervalMinutes(undefined), 10);
+  assert.equal(getDiaSyncIntervalMinutes(""), 10);
+  assert.equal(getDiaSyncIntervalMinutes("15"), 15);
+  assert.equal(getDiaSyncIntervalMinutes("60"), 25);
+  assert.equal(getDiaSyncIntervalMinutes("0"), 10);
+  assert.equal(getDiaSyncIntervalMinutes("invalid"), 10);
+});
+
+test("isDiaAuthError and resolveDiaSyncFailureDecision require consecutive auth failures before REQUIRES_REAUTH", () => {
+  assert.equal(isDiaAuthError(new DiaSessionExpiredError()), true);
+  assert.equal(isDiaAuthError(new Error("Dia returned status 222")), true);
+  assert.equal(isDiaAuthError(new Error("Dia returned status 403")), true);
+  assert.equal(isDiaAuthError(new Error("Dia tickets request failed (502 Bad Gateway)")), false);
+
+  // 1st auth failure enters grace retry instead of immediate lockout
+  const firstAuthFail = resolveDiaSyncFailureDecision({
+    currentStatus: "ACTIVE",
+    previousFailures: 0,
+    isAuthError: true,
+  });
+  assert.deepEqual(firstAuthFail, {
+    nextStatus: "FAILED",
+    nextFailures: 1,
+    shouldScheduleGraceRetry: true,
+  });
+
+  // 2nd consecutive auth failure transitions to REQUIRES_REAUTH
+  const secondAuthFail = resolveDiaSyncFailureDecision({
+    currentStatus: "FAILED",
+    previousFailures: 1,
+    isAuthError: true,
+  });
+  assert.deepEqual(secondAuthFail, {
+    nextStatus: "REQUIRES_REAUTH",
+    nextFailures: 2,
+    shouldScheduleGraceRetry: false,
+  });
+
+  // Manual retry while already REQUIRES_REAUTH stays REQUIRES_REAUTH immediately
+  const alreadyExpired = resolveDiaSyncFailureDecision({
+    currentStatus: "REQUIRES_REAUTH",
+    previousFailures: 0,
+    isAuthError: true,
+  });
+  assert.deepEqual(alreadyExpired, {
+    nextStatus: "REQUIRES_REAUTH",
+    nextFailures: 1,
+    shouldScheduleGraceRetry: false,
+  });
+
+  // Repeated non-auth transient network/5xx failures never lock out into REQUIRES_REAUTH
+  const transientFail = resolveDiaSyncFailureDecision({
+    currentStatus: "FAILED",
+    previousFailures: 4,
+    isAuthError: false,
+  });
+  assert.deepEqual(transientFail, {
+    nextStatus: "FAILED",
+    nextFailures: 5,
+    shouldScheduleGraceRetry: false,
+  });
 });

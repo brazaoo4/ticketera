@@ -6,6 +6,7 @@ import { AuthProvider } from "@/components/providers/auth-provider";
 import { AppShell } from "@/components/layout/app-shell";
 import { isDemoModeActive } from "@/lib/demo/demo-data";
 import { isPublicCatalogEnabled } from "@/lib/settings";
+import { prisma } from "@/lib/db";
 import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-registration";
 
 const geistSans = Geist({
@@ -65,6 +66,19 @@ export default async function RootLayout({
   const isDemoActive = await isDemoModeActive();
   const isPublicCatalog = await isPublicCatalogEnabled();
 
+  let diaReauthRequired = false;
+  if (user?.role === "ADMIN") {
+    try {
+      const expiredConn = await prisma.storeConnection.findFirst({
+        where: { storeSlug: "dia", status: "REQUIRES_REAUTH" },
+        select: { id: true },
+      });
+      diaReauthRequired = Boolean(expiredConn);
+    } catch {
+      // Safe during build / offline DB
+    }
+  }
+
   return (
     <html
       lang="en"
@@ -76,6 +90,7 @@ export default async function RootLayout({
             user={user}
             isDemoActive={isDemoActive}
             publicCatalog={isPublicCatalog}
+            diaReauthRequired={diaReauthRequired}
           >
             {children}
           </AppShell>

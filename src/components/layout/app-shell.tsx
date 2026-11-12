@@ -4,6 +4,7 @@ import { MobileNav } from "./mobile-nav";
 import Link from "next/link";
 import { Receipt } from "lucide-react";
 import { DemoBanner } from "@/components/demo/demo-banner";
+import { DiaReauthBanner } from "@/components/integrations/dia-reauth-banner";
 
 interface UserProfile {
   id: string;
@@ -16,11 +17,13 @@ export function AppShell({
   user,
   isDemoActive = false,
   publicCatalog = false,
+  diaReauthRequired = false,
 }: {
   children: React.ReactNode;
   user?: UserProfile | null;
   isDemoActive?: boolean;
   publicCatalog?: boolean;
+  diaReauthRequired?: boolean;
 }) {
   const showNavLinks = !!user || publicCatalog;
 
@@ -28,6 +31,9 @@ export function AppShell({
     <div className="min-h-screen flex flex-col bg-zinc-950 text-zinc-100 selection:bg-emerald-500 selection:text-black">
       {/* Demo Mode Active Banner */}
       {isDemoActive && !!user && <DemoBanner />}
+
+      {/* Dia Session Expired Admin Alert Banner */}
+      {diaReauthRequired && user?.role === "ADMIN" && <DiaReauthBanner />}
 
       {/* Desktop Navigation */}
       <DesktopNav user={user} publicCatalog={publicCatalog} />

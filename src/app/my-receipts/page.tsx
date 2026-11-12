@@ -8,6 +8,7 @@ import {
   Calendar,
   Sparkles,
   ArrowRight,
+  AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
 import { Prisma } from "@prisma/client";
@@ -69,13 +70,13 @@ export default async function MyReceiptsPage() {
     console.warn("[MyReceipts] Could not load user receipts from DB:", error);
   }
 
-  let diaConn: { id: string; status: string; totalSyncedCount: number } | null = null;
+  let diaConn: { id: string; status: string; syncEnabled: boolean; totalSyncedCount: number } | null = null;
   try {
     const conn = await prisma.storeConnection.findFirst({
       where: isAdmin
-        ? { storeSlug: "dia", syncEnabled: true }
-        : { userId: currentUserId, storeSlug: "dia", syncEnabled: true },
-      select: { id: true, status: true, totalSyncedCount: true },
+        ? { storeSlug: "dia" }
+        : { userId: currentUserId, storeSlug: "dia" },
+      select: { id: true, status: true, syncEnabled: true, totalSyncedCount: true },
     });
     diaConn = conn;
   } catch {
@@ -137,48 +138,61 @@ export default async function MyReceiptsPage() {
         </div>
 
         <div className="flex items-center gap-2.5">
-          {diaConn && (
-            session.user.role === "ADMIN" ? (
-              <Link
-                href="/admin/integrations"
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 transition-colors shadow-sm"
-                title="Manage Dia Auto-Sync"
-              >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    diaConn.status === "ACTIVE"
-                      ? "bg-emerald-400 animate-pulse"
-                      : diaConn.status === "REQUIRES_REAUTH"
-                      ? "bg-amber-400"
-                      : "bg-blue-400 animate-pulse"
-                  }`}
-                />
-                <span className="font-medium text-white">Dia Synced</span>
+          {diaConn && (() => {
+            const isExpired = diaConn.status === "REQUIRES_REAUTH";
+            const isFailed = diaConn.status === "FAILED";
+            const isActive = diaConn.status === "ACTIVE";
+            const label = isExpired
+              ? "Dia Reconnect Needed"
+              : isFailed
+              ? "Dia Sync Issue"
+              : isActive
+              ? diaConn.syncEnabled
+                ? "Dia Synced"
+                : "Dia Keepalive"
+              : "Dia Syncing";
+            const dotClass = isExpired
+              ? "bg-rose-400 animate-pulse"
+              : isFailed
+              ? "bg-amber-400"
+              : isActive
+              ? "bg-emerald-400 animate-pulse"
+              : "bg-blue-400 animate-pulse";
+            const containerClass = isExpired
+              ? "bg-rose-500/10 border-rose-500/30 hover:border-rose-400/50 text-rose-200"
+              : isFailed
+              ? "bg-amber-500/10 border-amber-500/30 hover:border-amber-400/50 text-amber-200"
+              : "bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-300";
+
+            const content = (
+              <>
+                <span className={`w-2 h-2 rounded-full ${dotClass}`} />
+                <span className={`font-medium ${isExpired ? "text-rose-200" : isFailed ? "text-amber-200" : "text-white"}`}>
+                  {label}
+                </span>
                 <span className="text-[10px] font-mono text-zinc-400">
                   ({diaConn.totalSyncedCount})
                 </span>
+              </>
+            );
+
+            return isAdmin ? (
+              <Link
+                href={isExpired ? "/admin/integrations?reconnect=1" : "/admin/integrations"}
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs transition-colors shadow-sm ${containerClass}`}
+                title={isExpired ? "Dia session expired — click to reconnect" : "Manage Dia Auto-Sync"}
+              >
+                {content}
               </Link>
             ) : (
               <div
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 shadow-sm"
-                title="Dia Auto-Sync is Active"
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-xs shadow-sm ${containerClass}`}
+                title={isExpired ? "Dia session expired — please notify admin to reconnect" : "Dia Auto-Sync Status"}
               >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    diaConn.status === "ACTIVE"
-                      ? "bg-emerald-400 animate-pulse"
-                      : diaConn.status === "REQUIRES_REAUTH"
-                      ? "bg-amber-400"
-                      : "bg-blue-400 animate-pulse"
-                  }`}
-                />
-                <span className="font-medium text-white">Dia Synced</span>
-                <span className="text-[10px] font-mono text-zinc-400">
-                  ({diaConn.totalSyncedCount})
-                </span>
+                {content}
               </div>
-            )
-          )}
+            );
+          })()}
           <ExportDataMenu range="all" />
           <Link
             href="/upload"
@@ -189,6 +203,16 @@ export default async function MyReceiptsPage() {
           </Link>
         </div>
       </div>
+
+      {/* Non-admin Dia re-auth notice (Admins see the global top banner) */}
+      {!isAdmin && diaConn?.status === "REQUIRES_REAUTH" && (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-200 flex items-center gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>
+            Automatic Club Dia receipt sync is paused because the Dia session expired. Ask an administrator to reconnect the account in Store Integrations.
+          </span>
+        </div>
+      )}
 
       {/* Receipts List or Empty State */}
       {receipts.length === 0 ? (

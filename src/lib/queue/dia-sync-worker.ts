@@ -11,13 +11,24 @@ import {
   fetchDiaTicketsPage,
   fetchDiaTicketDetail,
   getDiaAccountLabel,
+  getDiaJwtExpiration,
 } from "@/lib/integrations/dia/client";
+import {
+  DIA_GRACE_RETRY_DELAY_MS,
+  isDiaAuthError,
+  resolveDiaSyncFailureDecision,
+} from "@/lib/integrations/dia/sync-policy";
 import { importDiaTicket } from "@/lib/integrations/dia/importer";
-import { ensureDiaSyncSchedule } from "./dia-sync-queue";
+import {
+  ensureDiaSyncSchedule,
+  scheduleDelayedDiaVerify,
+  scheduleStartupDiaSync,
+} from "./dia-sync-queue";
 
 const globalForDiaWorker = globalThis as unknown as {
   diaSyncWorker?: Worker;
   activeSyncLocks?: Set<string>;
+  startupSyncScheduled?: boolean;
 };
 
 const activeSyncLocks =
@@ -106,6 +117,7 @@ export async function syncDiaConnection(
         currentCreds.customerAccess,
         pageRes.data.customer?.display_name || connection.accountLabel || undefined
       );
+      const tokenExpiresAt = getDiaJwtExpiration(currentCreds.customerAccess);
 
       await prisma.storeConnection.update({
         where: { id: connectionId },
@@ -113,6 +125,8 @@ export async function syncDiaConnection(
           accountLabel,
           encryptedAuthData: encryptCredentials(currentCreds),
           lastKeepAliveAt: new Date(),
+          tokenExpiresAt,
+          consecutiveFailures: 0,
           ...(shouldImportTickets ? {} : { status: "ACTIVE", lastError: null }),
         },
       });
@@ -199,6 +213,7 @@ export async function syncDiaConnection(
       }
 
       // 4. Persist final rotated credentials & mark ACTIVE
+      const finalTokenExpiresAt = getDiaJwtExpiration(currentCreds.customerAccess);
       await prisma.storeConnection.update({
         where: { id: connectionId },
         data: {
@@ -208,6 +223,8 @@ export async function syncDiaConnection(
           lastSyncAt: new Date(),
           lastKeepAliveAt: new Date(),
           lastTicketDate: latestTicketDate,
+          tokenExpiresAt: finalTokenExpiresAt,
+          consecutiveFailures: 0,
           totalSyncedCount: { increment: importedCount },
           lastError: lastTicketError,
         },
@@ -224,26 +241,35 @@ export async function syncDiaConnection(
       };
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      const isAuthError =
-        err instanceof DiaSessionExpiredError ||
-        /\b(222|401|403)\b/.test(errorMsg) ||
-        errorMsg.toLowerCase().includes("unauthorized") ||
-        errorMsg.toLowerCase().includes("expired");
+      const isAuthError = isDiaAuthError(err);
+      const decision = resolveDiaSyncFailureDecision({
+        currentStatus: connection.status,
+        previousFailures: connection.consecutiveFailures ?? 0,
+        isAuthError,
+      });
 
-      console.error(`[DiaWorker] ❌ Sync error for connection ${connectionId}:`, errorMsg);
+      console.error(
+        `[DiaWorker] ❌ Sync error for connection ${connectionId} (failures=${decision.nextFailures}, auth=${isAuthError}, reauth=${decision.nextStatus === "REQUIRES_REAUTH"}):`,
+        errorMsg
+      );
 
       await prisma.storeConnection.update({
         where: { id: connectionId },
         data: {
           encryptedAuthData: encryptCredentials(currentCreds),
-          status: isAuthError ? "REQUIRES_REAUTH" : "FAILED",
+          consecutiveFailures: decision.nextFailures,
+          status: decision.nextStatus,
           lastError: errorMsg,
         },
       });
 
+      if (decision.shouldScheduleGraceRetry) {
+        await scheduleDelayedDiaVerify(connectionId, DIA_GRACE_RETRY_DELAY_MS).catch(() => null);
+      }
+
       return {
         success: false,
-        requiresReauth: isAuthError,
+        requiresReauth: decision.nextStatus === "REQUIRES_REAUTH",
         error: errorMsg,
       };
     }
@@ -284,7 +310,8 @@ export async function syncAllDiaConnections(): Promise<{
 }
 
 /**
- * Initializes the BullMQ worker for Dia background syncs and schedules the 35-minute keepalive job.
+ * Initializes the BullMQ worker for Dia background syncs, registers the fixed-interval
+ * keepalive scheduler, and triggers an immediate post-boot keepalive check.
  */
 export function initDiaSyncWorker(): Worker | null {
   if (globalForDiaWorker.diaSyncWorker) {
@@ -294,10 +321,10 @@ export function initDiaSyncWorker(): Worker | null {
   try {
     const worker = new Worker(
       "dia-sync",
-      async (job: Job<{ connectionId?: string }>) => {
+      async (job: Job<{ connectionId?: string; isGraceRetry?: boolean }>) => {
         if (job.data?.connectionId) {
           const res = await syncDiaConnection(job.data.connectionId);
-          if (!res.success && !res.skipped && !res.requiresReauth) {
+          if (!res.success && !res.skipped && !res.requiresReauth && !job.data.isGraceRetry) {
             throw new Error(res.error || "Sync failed");
           }
         } else {
@@ -330,6 +357,14 @@ export function initDiaSyncWorker(): Worker | null {
     ensureDiaSyncSchedule().catch((err) => {
       console.warn("[DiaWorker] Could not register periodic schedule on init:", err);
     });
+
+    // Run an immediate keepalive check shortly after boot so restarts refresh active sessions
+    if (!globalForDiaWorker.startupSyncScheduled) {
+      globalForDiaWorker.startupSyncScheduled = true;
+      scheduleStartupDiaSync(5_000).catch((err) => {
+        console.warn("[DiaWorker] Could not schedule startup sync on init:", err);
+      });
+    }
 
     return worker;
   } catch (err) {

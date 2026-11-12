@@ -141,21 +141,23 @@ model SystemSetting {
 }
 
 model StoreConnection {
-  id                String     @id @default(cuid())
-  userId            String
-  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  storeSlug         String     // e.g. "dia"
-  accountLabel      String?    // e.g. "Bruno (#1032187140)"
-  encryptedAuthData String     // AES-256-GCM encrypted JSON: { sessionId, customerAccess, customerCode }
-  syncEnabled       Boolean    @default(true)
-  lastSyncAt        DateTime?
-  lastKeepAliveAt   DateTime?
-  lastTicketDate    DateTime?
-  totalSyncedCount  Int        @default(0)
-  status            SyncStatus @default(IDLE)
-  lastError         String?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  id                  String     @id @default(cuid())
+  userId              String
+  user                User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeSlug           String     // e.g. "dia"
+  accountLabel        String?    // e.g. "Bruno (#1032187140)"
+  encryptedAuthData   String     // AES-256-GCM encrypted JSON: { sessionId, customerAccess, customerCode }
+  syncEnabled         Boolean    @default(true)
+  lastSyncAt          DateTime?
+  lastKeepAliveAt     DateTime?
+  lastTicketDate      DateTime?
+  tokenExpiresAt      DateTime?
+  consecutiveFailures Int        @default(0)
+  totalSyncedCount    Int        @default(0)
+  status              SyncStatus @default(IDLE)
+  lastError           String?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
 
   @@unique([userId, storeSlug])
   @@index([storeSlug, syncEnabled])
