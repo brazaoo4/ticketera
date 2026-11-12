@@ -7,6 +7,7 @@ import {
   parseDiaAuthInput,
   fetchDiaTicketsPage,
   getDiaAccountLabel,
+  getDiaJwtExpiration,
 } from "@/lib/integrations/dia/client";
 import { encryptCredentials } from "@/lib/crypto/vault";
 import { syncDiaConnection } from "@/lib/queue/dia-sync-worker";
@@ -113,6 +114,7 @@ export async function connectDiaAccountAction(rawInput: string) {
     updatedCreds.customerAccess,
     pageRes.data.customer?.display_name
   );
+  const tokenExpiresAt = getDiaJwtExpiration(updatedCreds.customerAccess);
   const encryptedAuthData = encryptCredentials(updatedCreds);
 
   let connection;
@@ -133,6 +135,8 @@ export async function connectDiaAccountAction(rawInput: string) {
         syncEnabled: true,
         lastSyncAt: new Date(),
         lastKeepAliveAt: new Date(),
+        tokenExpiresAt,
+        consecutiveFailures: 0,
       },
       update: {
         accountLabel,
@@ -140,6 +144,8 @@ export async function connectDiaAccountAction(rawInput: string) {
         status: "ACTIVE",
         syncEnabled: true,
         lastKeepAliveAt: new Date(),
+        tokenExpiresAt,
+        consecutiveFailures: 0,
         lastError: null,
       },
     });
@@ -150,7 +156,7 @@ export async function connectDiaAccountAction(rawInput: string) {
     };
   }
 
-  // Ensure background 35-minute scheduler is active
+  // Ensure background keepalive scheduler is active
   ensureDiaSyncSchedule().catch(() => null);
 
   // Execute immediate initial sync so tickets are ready right away

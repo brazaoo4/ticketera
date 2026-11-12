@@ -38,6 +38,8 @@ interface StoreConnectionItem {
   lastSyncAt: Date | string | null;
   lastKeepAliveAt: Date | string | null;
   lastTicketDate: Date | string | null;
+  tokenExpiresAt?: Date | string | null;
+  consecutiveFailures?: number;
   totalSyncedCount: number;
   lastError: string | null;
   user: {
@@ -49,11 +51,15 @@ interface StoreConnectionItem {
 interface DiaIntegrationClientProps {
   connections: StoreConnectionItem[];
   currentUserId: string;
+  syncIntervalMinutes?: number;
+  initialOpenModal?: boolean;
 }
 
 export function DiaIntegrationClient({
   connections,
   currentUserId,
+  syncIntervalMinutes = 10,
+  initialOpenModal = false,
 }: DiaIntegrationClientProps) {
   const diaConnection =
     connections.find(
@@ -68,7 +74,7 @@ export function DiaIntegrationClient({
   const [manualCustomerCode, setManualCustomerCode] = useState("");
   const [copiedConsole, setCopiedConsole] = useState(false);
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(initialOpenModal);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [actionMessage, setActionMessage] = useState<{
     type: "success" | "error";
@@ -345,32 +351,76 @@ export function DiaIntegrationClient({
 
                 <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-1">
                   <div className="text-[10px] font-mono text-zinc-500 uppercase flex items-center gap-1.5">
-                    <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 ${
+                        diaConnection.status === "REQUIRES_REAUTH"
+                          ? "text-rose-400"
+                          : diaConnection.status === "FAILED"
+                          ? "text-amber-400"
+                          : "text-emerald-400"
+                      }`}
+                    />
                     <span>Keepalive Schedule</span>
                   </div>
-                  <div className="text-sm font-semibold text-emerald-400 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Every 35 min</span>
+                  <div
+                    className={`text-sm font-semibold flex items-center gap-1.5 ${
+                      diaConnection.status === "REQUIRES_REAUTH"
+                        ? "text-rose-400"
+                        : diaConnection.status === "FAILED"
+                        ? "text-amber-300"
+                        : "text-emerald-400"
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        diaConnection.status === "REQUIRES_REAUTH"
+                          ? "bg-rose-400"
+                          : diaConnection.status === "FAILED"
+                          ? "bg-amber-400 animate-pulse"
+                          : "bg-emerald-400 animate-pulse"
+                      }`}
+                    />
+                    <span>
+                      {diaConnection.status === "REQUIRES_REAUTH"
+                        ? "Paused (Reauth Needed)"
+                        : `Every ${syncIntervalMinutes} min`}
+                    </span>
                   </div>
                   <div className="text-[11px] font-mono text-zinc-500">
                     Heartbeat: {formatRelativeTime(diaConnection.lastKeepAliveAt)}
+                    {diaConnection.tokenExpiresAt && diaConnection.status !== "REQUIRES_REAUTH"
+                      ? ` • JWT exp ${new Date(diaConnection.tokenExpiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : ""}
                   </div>
                 </div>
               </div>
 
               {/* Error Alert if any */}
               {diaConnection.lastError && (
-                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-start gap-2.5">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-                  <div>
-                    <span className="font-semibold">Sync notice: </span>
-                    <span>{diaConnection.lastError}</span>
-                    {diaConnection.status === "REQUIRES_REAUTH" && (
-                      <p className="mt-1 text-zinc-400">
-                        Please update your token using the &quot;Update Token&quot; button above.
-                      </p>
-                    )}
+                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    <div>
+                      <span className="font-semibold">
+                        {diaConnection.status === "REQUIRES_REAUTH" ? "Session expired: " : "Sync notice: "}
+                      </span>
+                      <span>{diaConnection.lastError}</span>
+                      {diaConnection.status === "REQUIRES_REAUTH" && (
+                        <p className="mt-1 text-zinc-400">
+                          Automatic syncs are paused until you reconnect with a fresh browser session.
+                        </p>
+                      )}
+                    </div>
                   </div>
+                  {diaConnection.status === "REQUIRES_REAUTH" && (
+                    <button
+                      onClick={() => setIsModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                    >
+                      <Key className="w-3.5 h-3.5" />
+                      <span>Update Token Now</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -474,7 +524,7 @@ export function DiaIntegrationClient({
                     {diaConnection ? "Update Dia Credentials" : "Connect Dia Account"}
                   </h3>
                   <p className="text-xs text-zinc-400">
-                    1-time browser session setup • Automatic 35-min background keep-alive
+                    1-time browser session setup • Automatic {syncIntervalMinutes}-min background keep-alive
                   </p>
                 </div>
               </div>

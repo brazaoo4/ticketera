@@ -105,26 +105,41 @@ export function parseDiaAuthInput(rawInput: string): DiaAuthCredentials {
   };
 }
 
+function decodeDiaJwtPayload(customerAccess: string): Record<string, unknown> | null {
+  try {
+    const parts = customerAccess.split(".");
+    if (parts.length < 2) return null;
+    return JSON.parse(
+      Buffer.from(parts[1], "base64url").toString("utf8")
+    ) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extracts the expiration timestamp (`exp` claim) from a Dia customer_access JWT.
+ */
+export function getDiaJwtExpiration(customerAccess: string): Date | null {
+  const payload = decodeDiaJwtPayload(customerAccess);
+  const exp = payload?.exp;
+  if (typeof exp === "number" && Number.isFinite(exp) && exp > 0) {
+    return new Date(exp * 1000);
+  }
+  return null;
+}
+
 /**
  * Decodes the non-secret customer identity information stored inside the customer_access JWT payload.
  */
 export function getDiaAccountLabel(customerAccess: string, displayName?: string): string {
-  try {
-    const parts = customerAccess.split(".");
-    if (parts.length >= 2) {
-      const payload = JSON.parse(
-        Buffer.from(parts[1], "base64url").toString("utf8")
-      );
-      const code = payload["custom:customer_code"] || payload.sub;
-      if (displayName && code) {
-        return `${displayName} (#${code})`;
-      }
-      if (displayName) return displayName;
-      if (code) return `Club Dia (#${code})`;
-    }
-  } catch {
-    // ignore decoding error
+  const payload = decodeDiaJwtPayload(customerAccess);
+  const code = payload?.["custom:customer_code"] || payload?.sub;
+  if (displayName && code) {
+    return `${displayName} (#${code})`;
   }
+  if (displayName) return displayName;
+  if (code) return `Club Dia (#${code})`;
   return displayName || "Club Dia";
 }
 

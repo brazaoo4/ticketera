@@ -5,10 +5,15 @@ import { Link2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { AdminHeaderTabs } from "@/components/admin/admin-header-tabs";
 import { DiaIntegrationClient } from "./dia-integration-client";
+import { getDiaSyncIntervalMinutes } from "@/lib/integrations/dia/sync-policy";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminIntegrationsPage() {
+export default async function AdminIntegrationsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const session = await auth();
 
   if (!session?.user) {
@@ -18,6 +23,10 @@ export default async function AdminIntegrationsPage() {
   if (session.user.role !== "ADMIN") {
     redirect("/");
   }
+
+  const resolvedParams = searchParams ? await searchParams : {};
+  const initialOpenModal = resolvedParams.reconnect === "1";
+  const syncIntervalMinutes = getDiaSyncIntervalMinutes();
 
   const connections = await prisma.storeConnection.findMany({
     select: {
@@ -29,6 +38,8 @@ export default async function AdminIntegrationsPage() {
       lastSyncAt: true,
       lastKeepAliveAt: true,
       lastTicketDate: true,
+      tokenExpiresAt: true,
+      consecutiveFailures: true,
       totalSyncedCount: true,
       lastError: true,
       user: {
@@ -65,6 +76,8 @@ export default async function AdminIntegrationsPage() {
       <DiaIntegrationClient
         connections={connections}
         currentUserId={session.user.id}
+        syncIntervalMinutes={syncIntervalMinutes}
+        initialOpenModal={initialOpenModal}
       />
     </div>
   );

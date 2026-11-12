@@ -75,6 +75,8 @@ export async function ensureDatabaseSchema() {
           WHEN duplicate_object THEN null;
         END $$;
       `).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "tokenExpiresAt" TIMESTAMP(3);`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "consecutiveFailures" INTEGER NOT NULL DEFAULT 0;`).catch(() => null);
       return;
     }
 
@@ -153,6 +155,8 @@ export async function ensureDatabaseSchema() {
         "lastSyncAt" TIMESTAMP(3),
         "lastKeepAliveAt" TIMESTAMP(3),
         "lastTicketDate" TIMESTAMP(3),
+        "tokenExpiresAt" TIMESTAMP(3),
+        "consecutiveFailures" INTEGER NOT NULL DEFAULT 0,
         "totalSyncedCount" INTEGER NOT NULL DEFAULT 0,
         "status" "SyncStatus" NOT NULL DEFAULT 'IDLE',
         "lastError" TEXT,
