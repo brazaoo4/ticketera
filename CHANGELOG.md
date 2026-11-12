@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.4.1](https://github.com/brazaoo4/ticketera/compare/v2.4.0...v2.4.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **dia:** harden keepalive scheduling, startup sync, and re-auth alerts ([2c98b9a](https://github.com/brazaoo4/ticketera/commit/2c98b9ab21a38c9df39e1fb8c90a7d7c03a04ef1))
+* **dia:** harden keepalive scheduling, startup sync, and re-auth alerts ([0d38349](https://github.com/brazaoo4/ticketera/commit/0d38349a0bda4603dc3eaafc490ab8636a0d2007))
+
 ## [2.4.0](https://github.com/brazaoo4/ticketera/compare/v2.3.1...v2.4.0) (2026-11-04)
 
 
