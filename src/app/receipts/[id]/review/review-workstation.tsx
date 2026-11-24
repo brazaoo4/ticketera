@@ -27,6 +27,7 @@ import {
   X,
   Clock,
   Scale,
+  ScanBarcode,
 } from "lucide-react";
 import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
 import { ReceiptViewer } from "./receipt-viewer";
@@ -34,6 +35,7 @@ import {
   ProductSearchModal,
   SearchedProduct,
 } from "./product-search-modal";
+import { BarcodeScannerModal } from "@/components/common/barcode-scanner-modal";
 import {
   confirmReceiptAction,
   deleteReceiptAction,
@@ -417,6 +419,42 @@ export function ReviewWorkstation({
     setSearchTargetIndex(null);
   };
 
+  const handleApplyBarcodeFromModal = (match: CatalogLookupResult) => {
+    if (searchTargetIndex === null) return;
+    const currentItem = items[searchTargetIndex];
+    const isLinked = currentItem.mode === "link_existing" && !!currentItem.matchedProductInfo;
+    const qty = Math.max(Number(currentItem.quantity) || 1, 1);
+
+    const nextBaseUnit =
+      isLinked && currentItem.matchedProductInfo
+        ? currentItem.matchedProductInfo.baseUnit
+        : match.hasParsedQuantity !== false
+        ? match.baseUnit
+        : currentItem.baseUnit;
+
+    const nextUnitMeasure =
+      match.hasParsedQuantity !== false && match.unitMeasurePerPack > 0
+        ? Number((qty * match.unitMeasurePerPack).toFixed(3))
+        : currentItem.unitMeasure;
+
+    updateItem(searchTargetIndex, {
+      suggestedName: match.productName || currentItem.suggestedName,
+      ...(isLinked
+        ? {}
+        : {
+            newProductName: match.productName || currentItem.newProductName,
+            newProductBaseUnit: nextBaseUnit,
+          }),
+      baseUnit: nextBaseUnit,
+      unitMeasure: nextUnitMeasure,
+      isVariableWeight: false,
+      barcode: match.ean || match.nutrition?.ean || currentItem.barcode || null,
+      nutrition: match.nutrition || currentItem.nutrition || null,
+    });
+    setSearchModalOpen(false);
+    setSearchTargetIndex(null);
+  };
+
   // Confirm Receipt Action
   const handleConfirmReceipt = (nextUrl?: string) => {
     setFeedbackError(null);
@@ -575,6 +613,7 @@ export function ReviewWorkstation({
         }}
         onSelectProduct={handleSelectProduct}
         onSwitchToCreateNew={handleSwitchToCreateNew}
+        onApplyBarcodeLookup={handleApplyBarcodeFromModal}
         initialQuery={
           searchTargetIndex !== null
             ? items[searchTargetIndex]?.suggestedName ||
@@ -1382,6 +1421,7 @@ function ItemCard({
   const [isCatalogLoading, setIsCatalogLoading] = useState(false);
   const [catalogMatches, setCatalogMatches] = useState<CatalogLookupResult[]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
 
   const isModeCreateNew = item.mode === "create_new";
   const isLinked = item.mode === "link_existing" || !!item.matchedProductInfo;
@@ -1412,6 +1452,54 @@ function ItemCard({
       }
     } catch {
       setCatalogError("Unable to connect to the catalog at this time.");
+    } finally {
+      setIsCatalogLoading(false);
+    }
+  };
+
+  const handleBarcodeLookup = async (ean: string) => {
+    setBarcodeModalOpen(false);
+    setIsExpanded(true);
+    setIsCatalogOpen(true);
+    setIsCatalogLoading(true);
+    setCatalogError(null);
+    try {
+      const res = await fetch(`/api/catalog/lookup?barcode=${encodeURIComponent(ean)}`);
+      if (!res.ok) {
+        throw new Error("Barcode lookup failed");
+      }
+      const data = await res.json();
+      const offMatch = data.offMatch as CatalogLookupResult | null;
+      const matches = Array.isArray(data.matches) ? data.matches : [];
+      setCatalogMatches(matches);
+
+      if (data.localProduct) {
+        const lp = data.localProduct;
+        const measure =
+          offMatch && offMatch.hasParsedQuantity !== false && offMatch.unitMeasurePerPack > 0
+            ? Number((currentQty * offMatch.unitMeasurePerPack).toFixed(3))
+            : item.unitMeasure;
+        onUpdateItem(index, {
+          mode: "link_existing",
+          productId: lp.id,
+          matchConfidence: 1.0,
+          baseUnit: lp.baseUnit,
+          unitMeasure: measure,
+          matchedProductInfo: {
+            displayName: lp.displayName,
+            category: lp.category,
+            baseUnit: lp.baseUnit,
+            isStaple: lp.isStaple,
+          },
+          barcode: ean,
+          nutrition: offMatch?.nutrition || null,
+        });
+        setIsCatalogOpen(false);
+      } else if (matches.length === 0) {
+        setCatalogError(`No product found for barcode ${ean}.`);
+      }
+    } catch {
+      setCatalogError("Unable to query OpenFoodFacts for that barcode.");
     } finally {
       setIsCatalogLoading(false);
     }
@@ -1758,21 +1846,33 @@ function ItemCard({
               </strong>
             </div>
 
-            {/* Catalog lookup quick trigger */}
+            {/* Catalog lookup quick trigger + Secondary Barcode/EAN lookup */}
             {!readOnly && (
-              <button
-                type="button"
-                onClick={handleCatalogLookup}
-                disabled={isCatalogLoading}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0"
-              >
-                {isCatalogLoading ? (
-                  <RefreshCw className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Search className="w-3 h-3 text-emerald-400" />
-                )}
-                <span>Lookup format</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleCatalogLookup}
+                  disabled={isCatalogLoading}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0"
+                >
+                  {isCatalogLoading ? (
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Search className="w-3 h-3 text-emerald-400" />
+                  )}
+                  <span>Lookup format</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBarcodeModalOpen(true)}
+                  disabled={isCatalogLoading}
+                  title="Secondary barcode / EAN lookup"
+                  aria-label="Scan barcode for item"
+                  className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-400 hover:text-emerald-400 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <ScanBarcode className="w-3.5 h-3.5" />
+                </button>
+              </>
             )}
           </div>
 
@@ -2183,6 +2283,12 @@ function ItemCard({
           </div>
         </div>
       )}
+
+      <BarcodeScannerModal
+        isOpen={barcodeModalOpen}
+        onClose={() => setBarcodeModalOpen(false)}
+        onDetected={(code) => void handleBarcodeLookup(code)}
+      />
     </div>
   );
 }

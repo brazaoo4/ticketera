@@ -29,6 +29,7 @@ import {
   Pencil,
   Star,
   Leaf,
+  ScanBarcode,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -48,6 +49,7 @@ import {
   getNovaGroupMeta,
   getNutriScoreBadgeStyle,
 } from "@/lib/analytics/nutrition";
+import { BarcodeScannerModal } from "@/components/common/barcode-scanner-modal";
 
 export function formatPackBadge(
   packSize: number,
@@ -183,9 +185,10 @@ export function ProductTrackerClient({
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Nutrition Lookup state
+  // Nutrition & Barcode Lookup state
   const [isFetchingNutrition, setIsFetchingNutrition] = useState(false);
   const [nutritionNotice, setNutritionNotice] = useState<string | null>(null);
+  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
 
   // Normalize product history modal state
   const [isNormalizeModalOpen, setIsNormalizeModalOpen] = useState(false);
@@ -1082,6 +1085,17 @@ export function ProductTrackerClient({
                     />
                     <span>{hasNutrition ? "Refresh OFF" : "Fetch Nutrition"}</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBarcodeModalOpen(true)}
+                    disabled={isFetchingNutrition}
+                    title="Scan barcode / EAN to match exact OpenFoodFacts entry"
+                    aria-label="Scan barcode for product nutrition"
+                    className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-emerald-400 whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
+                  >
+                    <ScanBarcode className="w-3.5 h-3.5 shrink-0" />
+                  </button>
                 </div>
               )}
 
@@ -1094,6 +1108,17 @@ export function ProductTrackerClient({
           );
         })()}
       </div>
+
+      <BarcodeScannerModal
+        isOpen={barcodeModalOpen}
+        onClose={() => setBarcodeModalOpen(false)}
+        onDetected={(code) => {
+          setBarcodeModalOpen(false);
+          void handleFetchNutrition(code);
+        }}
+        title="Match Product by Barcode"
+        subtitle="Fetch exact nutrition metadata & pack size via OpenFoodFacts"
+      />
 
       {/* ⚠️ SHRINKFLATION ALERT BANNER */}
       {shrinkflationIncidents && shrinkflationIncidents.length > 0 && (
