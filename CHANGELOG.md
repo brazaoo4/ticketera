@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.5.1](https://github.com/brazaoo4/ticketera/compare/v2.5.0...v2.5.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **security:** resolve all 11 CodeQL path injection, format string, and DOM XSS alerts ([6874117](https://github.com/brazaoo4/ticketera/commit/6874117d77b5f6eb17098ac5fb1f11322bb5fafc))
+* **security:** resolve CodeQL path injection, format string, and DOM XSS alerts ([fd9d336](https://github.com/brazaoo4/ticketera/commit/fd9d336d2fa03b1d065cda9fb657cb3e12fef0a0))
+
 ## [2.5.0](https://github.com/brazaoo4/ticketera/compare/v2.4.1...v2.5.0) (2026-11-24)
 
 
