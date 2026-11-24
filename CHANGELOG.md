@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.5.0](https://github.com/brazaoo4/ticketera/compare/v2.4.1...v2.5.0) (2026-11-24)
+
+
+### Features
+
+* **dia:** add AI item name resolution and fix Alpine receipt previews ([c1011cf](https://github.com/brazaoo4/ticketera/commit/c1011cf71d0de971d3a238956f0e4c6a4899ca01))
+* **dia:** add AI item name resolution, fix Alpine receipt previews and security upgrades ([b9a7f72](https://github.com/brazaoo4/ticketera/commit/b9a7f7295e760572bb7ef17331da7fc856ef69b6))
+
+
+### Bug Fixes
+
+* **security:** upgrade Next.js to 16.4.6 and resolve dependency advisories ([2f1239d](https://github.com/brazaoo4/ticketera/commit/2f1239d392798db2c2fe5dcdd65c91bf8e64a618))
+
 ## [2.4.1](https://github.com/brazaoo4/ticketera/compare/v2.4.0...v2.4.1) (2026-11-12)
 
 
