@@ -307,7 +307,7 @@ export async function POST(req: NextRequest) {
           duplicate: false,
         });
       } catch (itemErr) {
-        console.error(`[UploadRoute] Error processing file ${file.name}:`, itemErr);
+        console.error("[UploadRoute] Error processing file:", file.name, itemErr);
         results.push({
           receiptId: "",
           fileName: file.name,

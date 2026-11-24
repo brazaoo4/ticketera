@@ -249,7 +249,11 @@ export async function syncDiaConnection(
       });
 
       console.error(
-        `[DiaWorker] ❌ Sync error for connection ${connectionId} (failures=${decision.nextFailures}, auth=${isAuthError}, reauth=${decision.nextStatus === "REQUIRES_REAUTH"}):`,
+        "[DiaWorker] ❌ Sync error for connection %s (failures=%d, auth=%s, reauth=%s):",
+        connectionId,
+        decision.nextFailures,
+        isAuthError,
+        decision.nextStatus === "REQUIRES_REAUTH",
         errorMsg
       );
 

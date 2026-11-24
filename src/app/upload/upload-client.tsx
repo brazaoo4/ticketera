@@ -36,6 +36,90 @@ interface BatchReceiptItem {
   errorMessage?: string;
 }
 
+const PREVIEW_RASTER_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "image/heic",
+  "image/heif",
+]);
+
+function StagedImagePreview({ file }: { file: File }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let bitmap: ImageBitmap | null = null;
+
+    if (typeof createImageBitmap !== "function") {
+      Promise.resolve().then(() => {
+        if (!cancelled) setFailed(true);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    createImageBitmap(file)
+      .then((bmp) => {
+        if (cancelled) {
+          bmp.close();
+          return;
+        }
+        bitmap = bmp;
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext("2d");
+        if (!canvas || !ctx) {
+          setFailed(true);
+          return;
+        }
+        const scale = Math.max(canvas.width / bmp.width, canvas.height / bmp.height);
+        const drawW = bmp.width * scale;
+        const drawH = bmp.height * scale;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(
+          bmp,
+          (canvas.width - drawW) / 2,
+          (canvas.height - drawH) / 2,
+          drawW,
+          drawH
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+      bitmap?.close();
+    };
+  }, [file]);
+
+  if (failed) {
+    return (
+      <div className="w-12 h-14 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center shrink-0 text-zinc-400">
+        <FileText className="w-6 h-6 stroke-[1.8]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-12 h-14 rounded-lg overflow-hidden border border-zinc-700/80 shrink-0 bg-zinc-900">
+      <canvas
+        ref={canvasRef}
+        width={96}
+        height={112}
+        aria-label={file.name}
+        className="w-full h-full block"
+      />
+    </div>
+  );
+}
+
 export function UploadClient({
   stores,
   initialReceiptId,
@@ -54,7 +138,6 @@ export function UploadClient({
   // Staged files & mode
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadMode, setUploadMode] = useState<"batch" | "stitch">("batch");
-  const [filePreviews, setFilePreviews] = useState<Record<string, string>>({});
 
   // Metadata overrides
   const [selectedStoreId, setSelectedStoreId] = useState<string>("auto");
@@ -97,21 +180,6 @@ export function UploadClient({
   const allStagedAreImages =
     selectedFiles.length >= 2 &&
     selectedFiles.every((f) => f.type.startsWith("image/"));
-
-  // Generate object URL previews for staged images
-  useEffect(() => {
-    const urls: Record<string, string> = {};
-    selectedFiles.forEach((file) => {
-      if (file.type.startsWith("image/")) {
-        urls[file.name] = URL.createObjectURL(file);
-      }
-    });
-    setFilePreviews(urls);
-
-    return () => {
-      Object.values(urls).forEach((u) => URL.revokeObjectURL(u));
-    };
-  }, [selectedFiles]);
 
   // Elapsed time counter during single processing
   useEffect(() => {
@@ -868,7 +936,7 @@ export function UploadClient({
               {/* List of staged cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {selectedFiles.map((file, idx) => {
-                  const preview = filePreviews[file.name];
+                  const canPreviewImage = PREVIEW_RASTER_TYPES.has(file.type.toLowerCase());
                   const isPdfFile =
                     file.type === "application/pdf" ||
                     file.name.toLowerCase().endsWith(".pdf");
@@ -877,15 +945,11 @@ export function UploadClient({
                       key={`${file.name}-${idx}`}
                       className="flex items-center gap-3 p-2.5 rounded-xl border border-zinc-800 bg-zinc-950/60 relative group"
                     >
-                      {preview ? (
-                        <div className="w-12 h-14 rounded-lg overflow-hidden border border-zinc-700/80 shrink-0 bg-zinc-900">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={preview}
-                            alt={file.name}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
+                      {canPreviewImage ? (
+                        <StagedImagePreview
+                          key={`${file.name}-${file.size}-${file.lastModified}-${idx}`}
+                          file={file}
+                        />
                       ) : isPdfFile ? (
                         <div className="w-12 h-14 rounded-lg border border-rose-500/30 bg-rose-500/10 flex flex-col items-center justify-center shrink-0 text-rose-400">
                           <FileText className="w-5 h-5 stroke-[2]" />

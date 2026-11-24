@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
           }
         }
       } catch (fetchErr) {
-        console.warn(`[CatalogLookup] Fetch attempt failed for "${q}":`, fetchErr);
+        console.warn("[CatalogLookup] Fetch attempt failed for query:", q, fetchErr);
       }
     }
 

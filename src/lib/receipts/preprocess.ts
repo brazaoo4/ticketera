@@ -118,10 +118,11 @@ export async function preprocessReceipt(
     buffer.slice(0, 4).toString("ascii") === "%PDF";
 
   if (isPdf) {
-    const pdfFileName = `${receiptId}.pdf`;
-    const pdfFullPath = path.join(UPLOAD_DIR, pdfFileName);
-    const webpFileName = `${receiptId}.webp`;
-    const webpFullPath = path.join(UPLOAD_DIR, webpFileName);
+    const safeId = assertSafeReceiptId(receiptId);
+    const pdfFileName = `${safeId}.pdf`;
+    const pdfFullPath = getReceiptArtifactPath(safeId, "pdf");
+    const webpFileName = `${safeId}.webp`;
+    const webpFullPath = getReceiptArtifactPath(safeId, "webp");
 
     // 1. Preserve original PDF on disk for record-keeping and audit
     await fs.promises.writeFile(pdfFullPath, buffer);
@@ -132,7 +133,7 @@ export async function preprocessReceipt(
       renderedBuffer = await renderPdfToImage(buffer);
       await fs.promises.writeFile(webpFullPath, renderedBuffer);
     } catch (renderErr) {
-      console.warn(`[Preprocess] PDF rendering to WebP failed for ${receiptId}:`, renderErr);
+      console.warn("[Preprocess] PDF rendering to WebP failed for receipt:", safeId, renderErr);
     }
 
     // 3. Extract text if digital text stream is present
@@ -143,7 +144,7 @@ export async function preprocessReceipt(
         extractedText = text;
       }
     } catch (pdfErr) {
-      console.warn(`[Preprocess] PDF text extraction failed for ${receiptId}:`, pdfErr);
+      console.warn("[Preprocess] PDF text extraction failed for receipt:", safeId, pdfErr);
     }
 
     if (renderedBuffer) {
@@ -169,8 +170,9 @@ export async function preprocessReceipt(
   }
 
   // Otherwise, handle as image through Sharp pipeline (with decompression bomb defense)
-  const fileName = `${receiptId}.webp`;
-  const fullPath = path.join(UPLOAD_DIR, fileName);
+  const safeId = assertSafeReceiptId(receiptId);
+  const fileName = `${safeId}.webp`;
+  const fullPath = getReceiptArtifactPath(safeId, "webp");
 
   try {
     const enhancedBuffer = await sharp(buffer, { limitInputPixels: 64_000_000 })
@@ -198,7 +200,7 @@ export async function preprocessReceipt(
       mimeType: "image/webp",
     };
   } catch (sharpErr) {
-    console.warn(`[Preprocess] Sharp enhancement failed for ${receiptId}, saving raw buffer:`, sharpErr);
+    console.warn("[Preprocess] Sharp enhancement failed, saving raw buffer for receipt:", safeId, sharpErr);
     // Fallback: save raw buffer
     await fs.promises.writeFile(fullPath, buffer);
     return {
@@ -225,8 +227,9 @@ export async function stitchAndPreprocessImages(
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   }
 
-  const fileName = `${receiptId}.webp`;
-  const fullPath = path.join(UPLOAD_DIR, fileName);
+  const safeId = assertSafeReceiptId(receiptId);
+  const fileName = `${safeId}.webp`;
+  const fullPath = getReceiptArtifactPath(safeId, "webp");
 
   try {
     const TARGET_WIDTH = 1600;
@@ -282,22 +285,51 @@ export async function stitchAndPreprocessImages(
       mimeType: "image/webp",
     };
   } catch (stitchErr) {
-    console.warn(`[Preprocess] Image stitching failed for ${receiptId}, falling back to first image:`, stitchErr);
+    console.warn("[Preprocess] Image stitching failed, falling back to first image for receipt:", safeId, stitchErr);
     // Fallback: preprocess first buffer
-    return preprocessReceipt(receiptId, buffers[0], "image/jpeg");
+    return preprocessReceipt(safeId, buffers[0], "image/jpeg");
   }
+}
+
+const SAFE_RECEIPT_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const SAFE_FILENAME_RE = /^[a-zA-Z0-9._-]{1,255}$/;
+
+export function assertSafeReceiptId(receiptId: string): string {
+  if (typeof receiptId !== "string" || !SAFE_RECEIPT_ID_RE.test(receiptId)) {
+    throw new Error("Invalid receipt identifier");
+  }
+  return receiptId;
 }
 
 export function getReceiptFilePath(sourceFile: string): string {
   // Prevent directory traversal attacks
   const sanitized = path.basename(sourceFile);
-  const resolvedUploadDir = path.resolve(UPLOAD_DIR);
-  const resolvedPath = path.resolve(UPLOAD_DIR, sanitized);
+  if (
+    !SAFE_FILENAME_RE.test(sanitized) ||
+    sanitized === "." ||
+    sanitized === ".." ||
+    sanitized.includes("..")
+  ) {
+    throw new Error("Invalid file path traversal attempt");
+  }
 
-  if (!resolvedPath.startsWith(resolvedUploadDir + path.sep) && resolvedPath !== resolvedUploadDir) {
+  const resolvedUploadDir = fs.existsSync(/*turbopackIgnore: true*/ UPLOAD_DIR)
+    ? fs.realpathSync(/*turbopackIgnore: true*/ UPLOAD_DIR)
+    : path.resolve(/*turbopackIgnore: true*/ UPLOAD_DIR);
+  const resolvedPath = path.resolve(/*turbopackIgnore: true*/ resolvedUploadDir, sanitized);
+
+  if (!resolvedPath.startsWith(resolvedUploadDir + path.sep)) {
     throw new Error("Invalid file path traversal attempt");
   }
   return resolvedPath;
+}
+
+export function getReceiptArtifactPath(
+  receiptId: string,
+  extension: "webp" | "pdf" | "json"
+): string {
+  const safeId = assertSafeReceiptId(receiptId);
+  return getReceiptFilePath(`${safeId}.${extension}`);
 }
 
 /**
@@ -305,8 +337,9 @@ export function getReceiptFilePath(sourceFile: string): string {
  * reducing disk storage by 70-85% while retaining crisp readability.
  */
 export async function compressReceiptImage(receiptId: string): Promise<boolean> {
-  const fileName = `${receiptId}.webp`;
-  const fullPath = path.join(UPLOAD_DIR, fileName);
+  const safeId = assertSafeReceiptId(receiptId);
+  const fileName = `${safeId}.webp`;
+  const fullPath = getReceiptArtifactPath(safeId, "webp");
 
   try {
     if (!fs.existsSync(fullPath)) {
@@ -335,13 +368,17 @@ export async function compressReceiptImage(receiptId: string): Promise<boolean> 
         ((statBefore.size - compressedBuffer.length) / statBefore.size) * 100
       );
       console.log(
-        `[Compress] ✓ Compressed receipt image ${fileName}: ${(statBefore.size / 1024).toFixed(0)}KB -> ${(compressedBuffer.length / 1024).toFixed(0)}KB (-${savedPercent}%)`
+        "[Compress] ✓ Compressed receipt image %s: %sKB -> %sKB (-%s%)",
+        fileName,
+        (statBefore.size / 1024).toFixed(0),
+        (compressedBuffer.length / 1024).toFixed(0),
+        savedPercent
       );
     }
 
     return true;
   } catch (err) {
-    console.warn(`[Compress] Notice: Could not post-compress receipt ${receiptId}:`, err);
+    console.warn("[Compress] Notice: Could not post-compress receipt:", safeId, err);
     return false;
   }
 }

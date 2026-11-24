@@ -1,7 +1,6 @@
 import fs from "fs";
-import path from "path";
 import sharp from "sharp";
-import { UPLOAD_DIR } from "@/lib/receipts/preprocess";
+import { getReceiptArtifactPath, UPLOAD_DIR } from "@/lib/receipts/preprocess";
 import { DiaTicketDetailResponse, DiaTicketSummary } from "./types";
 
 export const DIA_TICKET_RENDER_VERSION = 2;
@@ -225,7 +224,7 @@ export async function renderDiaTicketToWebp(
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   }
 
-  const jsonPath = path.join(UPLOAD_DIR, `${receiptId}.json`);
+  const jsonPath = getReceiptArtifactPath(receiptId, "json");
   await fs.promises.writeFile(
     jsonPath,
     JSON.stringify(
@@ -237,7 +236,7 @@ export async function renderDiaTicketToWebp(
   );
 
   const { svg } = buildDiaTicketSvg(summary, detail);
-  const webpPath = path.join(UPLOAD_DIR, `${receiptId}.webp`);
+  const webpPath = getReceiptArtifactPath(receiptId, "webp");
 
   await sharp(Buffer.from(svg))
     .webp({ quality: 90 })
@@ -251,12 +250,12 @@ export async function renderDiaTicketToWebp(
  * missing or generated with an older render version (e.g. pre-fontconfig tofu images).
  */
 export async function ensureFreshDiaTicketWebp(receiptId: string): Promise<boolean> {
-  const jsonPath = path.join(UPLOAD_DIR, `${receiptId}.json`);
-  if (!fs.existsSync(jsonPath)) {
-    return false;
-  }
-
   try {
+    const jsonPath = getReceiptArtifactPath(receiptId, "json");
+    if (!fs.existsSync(jsonPath)) {
+      return false;
+    }
+
     const raw = await fs.promises.readFile(jsonPath, "utf8");
     const parsed = JSON.parse(raw) as {
       renderVersion?: number;
@@ -264,7 +263,7 @@ export async function ensureFreshDiaTicketWebp(receiptId: string): Promise<boole
       detail?: DiaTicketDetailResponse;
     };
 
-    const webpPath = path.join(UPLOAD_DIR, `${receiptId}.webp`);
+    const webpPath = getReceiptArtifactPath(receiptId, "webp");
     if (
       parsed.renderVersion === DIA_TICKET_RENDER_VERSION &&
       fs.existsSync(webpPath)
@@ -279,7 +278,7 @@ export async function ensureFreshDiaTicketWebp(receiptId: string): Promise<boole
 
     return false;
   } catch (err) {
-    console.warn(`[DiaRender] Could not refresh DIA ticket preview ${receiptId}:`, err);
+    console.warn("[DiaRender] Could not refresh DIA ticket preview:", receiptId, err);
     return false;
   }
 }

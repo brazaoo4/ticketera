@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { getReceiptFilePath } from "@/lib/receipts/preprocess";
+import { getReceiptArtifactPath, getReceiptFilePath } from "@/lib/receipts/preprocess";
 import { renderPdfToImage } from "@/lib/receipts/pdf-extract";
 import { ensureFreshDiaTicketWebp } from "@/lib/integrations/dia/render-ticket";
 import fs from "fs";
-import path from "path";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +35,7 @@ export async function GET(
       },
     });
   } catch (err) {
-    console.error(`[FileRoute] Database error fetching receipt ${id}:`, err);
+    console.error("[FileRoute] Database error fetching receipt:", id, err);
   }
 
   if (!receipt) {
@@ -48,14 +47,14 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const uploadDir =
-    process.env.UPLOAD_DIR ||
-    (process.env.NODE_ENV === "production"
-      ? "/app/uploads"
-      : path.join(process.cwd(), "uploads"));
-
-  const companionPdfPath = path.join(uploadDir, `${id}.pdf`);
-  const companionWebpPath = path.join(uploadDir, `${id}.webp`);
+  let companionPdfPath: string | null = null;
+  let companionWebpPath: string | null = null;
+  try {
+    companionPdfPath = getReceiptArtifactPath(receipt.id, "pdf");
+    companionWebpPath = getReceiptArtifactPath(receipt.id, "webp");
+  } catch {
+    return NextResponse.json({ error: "Invalid receipt identifier" }, { status: 400 });
+  }
 
   let sourceFilePath: string | null = null;
   try {
@@ -84,19 +83,19 @@ export async function GET(
         headers: {
           "Content-Type": "application/pdf",
           "X-Content-Type-Options": "nosniff",
-          "Content-Disposition": `${wantDownload ? "attachment" : "inline"}; filename="receipt-${id}.pdf"`,
+          "Content-Disposition": `${wantDownload ? "attachment" : "inline"}; filename="receipt-${receipt.id}.pdf"`,
           "Cache-Control": "private, max-age=86400",
         },
       });
     } catch (pdfErr) {
-      console.error(`[FileRoute] Error reading original PDF for ${id}:`, pdfErr);
+      console.error("[FileRoute] Error reading original PDF for receipt:", receipt.id, pdfErr);
       return NextResponse.json({ error: "Could not read original PDF" }, { status: 500 });
     }
   }
 
   // Case 2: Visual image display (WebP)
-  await ensureFreshDiaTicketWebp(id).catch((err) =>
-    console.warn(`[FileRoute] DIA preview refresh failed for ${id}:`, err)
+  await ensureFreshDiaTicketWebp(receipt.id).catch((err) =>
+    console.warn("[FileRoute] DIA preview refresh failed for receipt:", receipt.id, err)
   );
 
   if (fs.existsSync(companionWebpPath)) {
@@ -116,20 +115,20 @@ export async function GET(
           "Content-Type": "image/webp",
           "X-Content-Type-Options": "nosniff",
           "X-Has-Original-Pdf": hasOriginalPdf ? "true" : "false",
-          "Content-Disposition": `inline; filename="${id}.webp"`,
+          "Content-Disposition": `inline; filename="${receipt.id}.webp"`,
           ETag: etag,
           "Cache-Control": cacheControl,
         },
       });
     } catch (webpErr) {
-      console.error(`[FileRoute] Error reading WebP companion for ${id}:`, webpErr);
+      console.error("[FileRoute] Error reading WebP companion for receipt:", receipt.id, webpErr);
     }
   }
 
   // Case 3: Receipt with PDF on disk -> on-demand render and cache WebP
   if (effectivePdfPath && !fs.existsSync(companionWebpPath)) {
     try {
-      console.log(`[FileRoute] On-demand rendering WebP for PDF receipt ${id}...`);
+      console.log("[FileRoute] On-demand rendering WebP for PDF receipt:", receipt.id);
       const rawPdf = await fs.promises.readFile(effectivePdfPath);
       const rendered = await renderPdfToImage(rawPdf);
       await fs.promises.writeFile(companionWebpPath, rendered);
@@ -140,12 +139,12 @@ export async function GET(
           "Content-Type": "image/webp",
           "X-Content-Type-Options": "nosniff",
           "X-Has-Original-Pdf": "true",
-          "Content-Disposition": `inline; filename="${id}.webp"`,
+          "Content-Disposition": `inline; filename="${receipt.id}.webp"`,
           "Cache-Control": "private, max-age=86400, stale-while-revalidate=3600",
         },
       });
     } catch (renderErr) {
-      console.warn(`[FileRoute] On-demand PDF render failed for ${id}:`, renderErr);
+      console.warn("[FileRoute] On-demand PDF render failed for receipt:", receipt.id, renderErr);
     }
   }
 
@@ -173,7 +172,7 @@ export async function GET(
       },
     });
   } catch (err) {
-    console.error(`[FileRoute] Error reading file for receipt ${id}:`, err);
+    console.error("[FileRoute] Error reading file for receipt:", receipt.id, err);
     return NextResponse.json(
       { error: "Error reading receipt file" },
       { status: 500 }
