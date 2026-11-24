@@ -1,7 +1,14 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { Download, FileSpreadsheet, FileText, FileCode, ChevronDown } from "lucide-react";
+import {
+  Download,
+  FileSpreadsheet,
+  FileText,
+  FileCode,
+  Archive,
+  ChevronDown,
+} from "lucide-react";
 
 interface ExportDataMenuProps {
   range?: string;
@@ -26,9 +33,12 @@ export function ExportDataMenu({ range = "all", className = "" }: ExportDataMenu
     };
   }, [isOpen]);
 
-  const handleDownload = (format: "items_csv" | "receipts_csv" | "json") => {
+  const handleDownload = (
+    format: "items_csv" | "receipts_csv" | "json" | "bundle"
+  ) => {
     setIsOpen(false);
-    const url = `/api/export?format=${format}&range=${range.toLowerCase()}`;
+    const effectiveRange = format === "bundle" ? "all" : range.toLowerCase();
+    const url = `/api/export?format=${format}&range=${effectiveRange}`;
     window.location.href = url;
   };
 
@@ -88,6 +98,20 @@ export function ExportDataMenu({ range = "all", className = "" }: ExportDataMenu
             <div className="truncate">
               <div className="font-semibold">Full JSON Backup</div>
               <div className="text-[10px] text-zinc-500">Structured database backup</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleDownload("bundle")}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-200 hover:text-white hover:bg-zinc-900 rounded-xl whitespace-nowrap shrink-0 transition-colors text-left border-t border-zinc-800/80 mt-1 pt-2"
+          >
+            <Archive className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div className="truncate">
+              <div className="font-semibold">Full Portable Backup (.zip)</div>
+              <div className="text-[10px] text-zinc-500">
+                Database + receipt files (WebP, PDF, JSON)
+              </div>
             </div>
           </button>
         </div>

@@ -176,7 +176,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### 📱 Progressive Web App (PWA) & Data Portability
 - **Installable PWA:** Full offline fallback and standalone app mode on Android and iOS.
 - **Native Android Share Target (`POST /upload-share`):** Share a PDF receipt directly from your supermarket app (Mercadona, Lidl Plus) into Ticketera without downloading it first.
-- **One-Click Export:** Download full Excel-safe UTF-8 BOM CSVs (`items_csv`, `receipts_csv`) or complete structured JSON backups anytime.
+- **Portable Backup & Safe Restore:** Download Excel-safe UTF-8 BOM CSVs (`items_csv`, `receipts_csv`), structured JSON backups, or complete **`.zip` Portable Backup Bundles** containing database records alongside stored receipt artifacts (`WebP`, `PDF`, `JSON`), paired with pre-restore inspection and merge/replace import in `/admin/settings`.
 
 ---
 

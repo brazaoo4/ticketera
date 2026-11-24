@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { buildPortableBackupBundle } from "@/lib/backup/bundle";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +42,35 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const format = searchParams.get("format") || "items_csv";
   const range = (searchParams.get("range") || "all").toLowerCase();
+
+  // 0. FULL PORTABLE BACKUP BUNDLE (Database + UPLOAD_DIR WebP/PDF/JSON artifacts)
+  if (format === "bundle" || format === "full_backup") {
+    const rateResult = await checkRateLimit({
+      key: `export-bundle:${user.id}`,
+      limit: 10,
+      windowSeconds: 600,
+    });
+    if (!rateResult.success) {
+      return NextResponse.json(
+        { error: "Too many full backup downloads. Please wait a few minutes." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateResult.resetSeconds) },
+        }
+      );
+    }
+
+    const { buffer, filename } = await buildPortableBackupBundle({ user });
+    return new NextResponse(new Uint8Array(buffer), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/zip",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  }
 
   // Compute date range cutoff
   let dateCutoff: Date | undefined;
@@ -219,6 +250,17 @@ export async function GET(req: NextRequest) {
               category: item.product.category,
               baseUnit: item.product.baseUnit,
               isStaple: item.product.isStaple,
+              nutriScore: item.product.nutriScore,
+              novaGroup: item.product.novaGroup,
+              proteinPer100g:
+                item.product.proteinPer100g !== null
+                  ? Number(item.product.proteinPer100g)
+                  : null,
+              kcalPer100g:
+                item.product.kcalPer100g !== null
+                  ? Number(item.product.kcalPer100g)
+                  : null,
+              ean: item.product.ean,
             }
           : null,
       })),

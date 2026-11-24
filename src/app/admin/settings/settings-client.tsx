@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { updatePublicCatalogAction } from "./actions";
 import { clearDemoDataAction, loadDemoDataAction } from "@/lib/demo/actions";
+import { BackupRestorePanel } from "@/components/admin/backup-restore-panel";
 
 interface SettingsClientProps {
   initialPublicCatalog: boolean;
@@ -26,12 +27,20 @@ interface SettingsClientProps {
     hasOpenAI: boolean;
     uploadDir: string;
   };
+  backupSummary: {
+    receiptsCount: number;
+    productsCount: number;
+    budgetsCount: number;
+    artifactFilesCount: number;
+    artifactTotalMb: string;
+  };
 }
 
 export function SettingsClient({
   initialPublicCatalog,
   isDemoActive,
   systemInfo,
+  backupSummary,
 }: SettingsClientProps) {
   const [isPublicCatalog, setIsPublicCatalog] = useState(initialPublicCatalog);
   const [demoActive, setDemoActive] = useState(isDemoActive);
@@ -270,6 +279,9 @@ export function SettingsClient({
           <span>{demoActive ? "Purge Demo Dataset" : "Load Demo Dataset"}</span>
         </button>
       </div>
+
+      {/* Full Portable Backup & Restore */}
+      <BackupRestorePanel backupSummary={backupSummary} />
 
       {/* AI Vision & Storage Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

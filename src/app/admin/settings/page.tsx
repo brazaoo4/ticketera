@@ -1,9 +1,13 @@
 import React from "react";
+import fs from "fs";
+import path from "path";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { Settings as SettingsIcon } from "lucide-react";
 import { isPublicCatalogEnabled } from "@/lib/settings";
 import { isDemoModeActive } from "@/lib/demo/demo-data";
+import { UPLOAD_DIR } from "@/lib/receipts/preprocess";
 import { SettingsClient } from "./settings-client";
 import { AdminHeaderTabs } from "@/components/admin/admin-header-tabs";
 
@@ -20,14 +24,56 @@ export default async function AdminSettingsPage() {
     redirect("/");
   }
 
-  const isPublicCatalog = await isPublicCatalogEnabled();
-  const isDemoActive = await isDemoModeActive();
+  const [
+    isPublicCatalog,
+    isDemoActive,
+    receiptsCount,
+    productsCount,
+    budgetsCount,
+  ] = await Promise.all([
+    isPublicCatalogEnabled(),
+    isDemoModeActive(),
+    prisma.receipt.count().catch(() => 0),
+    prisma.product.count().catch(() => 0),
+    prisma.monthlyBudget.count().catch(() => 0),
+  ]);
+
+  let artifactFilesCount = 0;
+  let artifactTotalBytes = 0;
+  try {
+    if (fs.existsSync(UPLOAD_DIR)) {
+      const entries = await fs.promises.readdir(UPLOAD_DIR, {
+        withFileTypes: true,
+      });
+      for (const ent of entries) {
+        if (!ent.isFile()) continue;
+        if (!/\.(webp|pdf|json)$/i.test(ent.name)) continue;
+        const st = await fs.promises
+          .stat(path.join(UPLOAD_DIR, ent.name))
+          .catch(() => null);
+        if (st) {
+          artifactFilesCount++;
+          artifactTotalBytes += st.size;
+        }
+      }
+    }
+  } catch {
+    // ignore filesystem summary errors
+  }
 
   const systemInfo = {
     hasGemini: !!process.env.GEMINI_API_KEY,
     hasGroq: !!process.env.GROQ_API_KEY,
     hasOpenAI: !!process.env.OPENAI_API_KEY,
-    uploadDir: process.env.UPLOAD_DIR || "/app/uploads",
+    uploadDir: UPLOAD_DIR,
+  };
+
+  const backupSummary = {
+    receiptsCount,
+    productsCount,
+    budgetsCount,
+    artifactFilesCount,
+    artifactTotalMb: (artifactTotalBytes / (1024 * 1024)).toFixed(2),
   };
 
   return (
@@ -45,7 +91,7 @@ export default async function AdminSettingsPage() {
             <span>System Settings</span>
           </h1>
           <p className="text-xs sm:text-sm text-zinc-400">
-            Manage instance privacy policies, access controls, and system preferences.
+            Manage instance privacy policies, access controls, backups, and system preferences.
           </p>
         </div>
       </div>
@@ -58,6 +104,7 @@ export default async function AdminSettingsPage() {
         initialPublicCatalog={isPublicCatalog}
         isDemoActive={isDemoActive}
         systemInfo={systemInfo}
+        backupSummary={backupSummary}
       />
     </div>
   );
