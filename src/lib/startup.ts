@@ -466,23 +466,11 @@ export async function cleanupSyntheticSeedDataAndDuplicates() {
           data: { productId: primary.id },
         });
 
-        // Reassign aliases safely
-        for (const alias of dup.aliases) {
-          const existingAlias = await prisma.productAlias.findUnique({
-            where: {
-              storeId_rawAlias: {
-                storeId: alias.storeId,
-                rawAlias: alias.rawAlias,
-              },
-            },
-          });
-          if (!existingAlias) {
-            await prisma.productAlias.update({
-              where: { id: alias.id },
-              data: { productId: primary.id },
-            });
-          }
-        }
+        // Reassign all aliases to primary (unique index is on (storeId, rawAlias), so no conflict with primary's own aliases)
+        await prisma.productAlias.updateMany({
+          where: { productId: dup.id },
+          data: { productId: primary.id },
+        });
 
         // Delete duplicate product
         await prisma.product.delete({

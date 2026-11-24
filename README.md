@@ -162,6 +162,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - Interactive line-item editor with **`Δ €0.00` Math Sanity Bar**, verifying that item subtotals match the receipt's printed total.
 - **One-Click Supermarket Catalog Lookup:** Integrated OpenFoodFacts Spain lookup with store-brand matching (Hacendado, Milbona, etc.) to autofill package weights and canonical names.
 - **Rapid "Confirm & Next Pending" Queue:** Confirming trained aliases saves memory rules (`unitMeasurePerPack`, `isVariableWeight`), auto-applying sizes to subsequent tickets in the batch.
+- **Admin Duplicate Product Merge (`/admin/products`):** Suggested duplicate clusters and multi-select one-click merge reassigning all `ReceiptItem` and `ProductAlias` records atomically in a single transaction.
 
 ### 📊 Deep Inflation, Budget & Nutrition Intelligence
 - **"Tu IPC Real" (Personal Inflation Rate):** Computes your consumption-weighted personal inflation index against a general staple basket benchmark.
