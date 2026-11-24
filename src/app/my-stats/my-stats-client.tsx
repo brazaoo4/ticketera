@@ -32,6 +32,8 @@ import {
 } from "lucide-react";
 import { ExportDataMenu } from "@/components/common/export-data-menu";
 import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation-types";
+import { MonthlyBudgetsSection } from "@/components/stats/monthly-budgets-section";
+import type { UserBudgetTarget } from "@/lib/analytics/budgets";
 
 export interface TaxBreakdownBracket {
   rate: number;
@@ -84,6 +86,7 @@ interface MyStatsClientProps {
   initialItems: StatsItem[];
   stapleSightings?: StapleSighting[];
   shrinkflationIncidents?: ShrinkflationIncident[];
+  initialBudgets?: UserBudgetTarget[];
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -106,6 +109,7 @@ export function MyStatsClient({
   initialItems,
   stapleSightings = [],
   shrinkflationIncidents = [],
+  initialBudgets = [],
 }: MyStatsClientProps) {
   const [timeframe, setTimeframe] = useState<"3M" | "6M" | "1Y" | "2Y" | "All">("1Y");
   const [chartView, setChartView] = useState<"stacked" | "total">("stacked");
@@ -820,6 +824,14 @@ export function MyStatsClient({
               </p>
             </div>
           </div>
+
+          {/* 2b. MONTHLY CATEGORY BUDGETS & PACING */}
+          <MonthlyBudgetsSection
+            receipts={initialReceipts}
+            items={initialItems}
+            initialBudgets={initialBudgets}
+            categoryColors={CATEGORY_COLORS}
+          />
 
           {/* 3. MONTHLY EXPENDITURE CHART (RECHARTS STACKED BAR) */}
           <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/40 p-6 sm:p-8 space-y-5">

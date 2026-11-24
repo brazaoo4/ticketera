@@ -78,6 +78,26 @@ export async function ensureDatabaseSchema() {
       `).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "tokenExpiresAt" TIMESTAMP(3);`).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "consecutiveFailures" INTEGER NOT NULL DEFAULT 0;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "MonthlyBudget" (
+          "id" TEXT NOT NULL,
+          "userId" TEXT NOT NULL,
+          "category" TEXT NOT NULL,
+          "monthlyTarget" DECIMAL(10,2) NOT NULL,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "MonthlyBudget_pkey" PRIMARY KEY ("id")
+        );
+      `).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "MonthlyBudget_userId_category_key" ON "MonthlyBudget"("userId", "category");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "MonthlyBudget_userId_idx" ON "MonthlyBudget"("userId");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        DO $$ BEGIN
+          ALTER TABLE "MonthlyBudget" ADD CONSTRAINT "MonthlyBudget_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+        END $$;
+      `).catch(() => null);
       return;
     }
 
@@ -215,6 +235,16 @@ export async function ensureDatabaseSchema() {
         CONSTRAINT "SystemSetting_pkey" PRIMARY KEY ("key")
       );`,
 
+      `CREATE TABLE IF NOT EXISTS "MonthlyBudget" (
+        "id" TEXT NOT NULL,
+        "userId" TEXT NOT NULL,
+        "category" TEXT NOT NULL,
+        "monthlyTarget" DECIMAL(10,2) NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "MonthlyBudget_pkey" PRIMARY KEY ("id")
+      );`,
+
       `CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "Store_name_key" ON "Store"("name");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "Store_slug_key" ON "Store"("slug");`,
@@ -229,6 +259,8 @@ export async function ensureDatabaseSchema() {
       `CREATE INDEX IF NOT EXISTS "Product_category_idx" ON "Product"("category");`,
       `CREATE INDEX IF NOT EXISTS "Product_isStaple_idx" ON "Product"("isStaple");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "ProductAlias_storeId_rawAlias_key" ON "ProductAlias"("storeId", "rawAlias");`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS "MonthlyBudget_userId_category_key" ON "MonthlyBudget"("userId", "category");`,
+      `CREATE INDEX IF NOT EXISTS "MonthlyBudget_userId_idx" ON "MonthlyBudget"("userId");`,
       `CREATE INDEX IF NOT EXISTS "ReceiptItem_productId_confirmed_excluded_idx" ON "ReceiptItem"("productId", "confirmed", "excluded");`,
       `CREATE INDEX IF NOT EXISTS "ReceiptItem_receiptId_idx" ON "ReceiptItem"("receiptId");`,
 
@@ -270,6 +302,12 @@ export async function ensureDatabaseSchema() {
 
       `DO $$ BEGIN
         ALTER TABLE "ReceiptItem" ADD CONSTRAINT "ReceiptItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;`,
+
+      `DO $$ BEGIN
+        ALTER TABLE "MonthlyBudget" ADD CONSTRAINT "MonthlyBudget_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$;`,

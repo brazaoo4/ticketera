@@ -26,6 +26,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Native <dialog> modal scroll containment */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
 /* Custom terminal/fintech scrollbars */
 ::-webkit-scrollbar {
   width: 8px;

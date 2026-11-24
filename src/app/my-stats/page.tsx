@@ -16,31 +16,37 @@ export default async function MyStatsPage() {
 
   const isAdmin = session.user.role === "ADMIN";
 
-  const receipts = await prisma.receipt.findMany({
-    where: {
-      ...(isAdmin ? {} : { userId: session.user.id }),
-      status: "CONFIRMED",
-    },
-    include: {
-      store: true,
-      items: {
-        where: { excluded: false, confirmed: true },
-        include: {
-          product: {
-            select: {
-              id: true,
-              displayName: true,
-              slug: true,
-              category: true,
-              baseUnit: true,
-              isStaple: true,
+  const [receipts, dbBudgets] = await Promise.all([
+    prisma.receipt.findMany({
+      where: {
+        ...(isAdmin ? {} : { userId: session.user.id }),
+        status: "CONFIRMED",
+      },
+      include: {
+        store: true,
+        items: {
+          where: { excluded: false, confirmed: true },
+          include: {
+            product: {
+              select: {
+                id: true,
+                displayName: true,
+                slug: true,
+                category: true,
+                baseUnit: true,
+                isStaple: true,
+              },
             },
           },
         },
       },
-    },
-    orderBy: { purchaseDate: "asc" },
-  });
+      orderBy: { purchaseDate: "asc" },
+    }),
+    prisma.monthlyBudget.findMany({
+      where: { userId: session.user.id },
+      orderBy: { category: "asc" },
+    }),
+  ]);
 
   if (receipts.length === 0) {
     return (
@@ -126,12 +132,18 @@ export default async function MyStatsPage() {
     purchaseDate: s.receipt.purchaseDate.toISOString(),
   }));
 
+  const serializedBudgets = dbBudgets.map((b) => ({
+    category: b.category,
+    monthlyTarget: Number(b.monthlyTarget),
+  }));
+
   return (
     <MyStatsClient
       initialReceipts={serializedReceipts}
       initialItems={serializedItems}
       stapleSightings={serializedStapleSightings}
       shrinkflationIncidents={shrinkflationIncidents}
+      initialBudgets={serializedBudgets}
     />
   );
 }
