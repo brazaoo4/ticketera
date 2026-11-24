@@ -21,6 +21,10 @@ import {
   matchProductInCatalog,
 } from "@/lib/integrations/dia/importer";
 import type { DiaTicketDetailResponse } from "@/lib/integrations/dia/types";
+import {
+  normalizeBarcode,
+  type ProductNutritionMeta,
+} from "@/lib/catalog/parser";
 
 export interface ReviewItemInput {
   id?: string;
@@ -46,6 +50,8 @@ export interface ReviewItemInput {
   isVariableWeight?: boolean;
   isDiscount: boolean;
   excluded: boolean;
+  barcode?: string | null;
+  nutrition?: ProductNutritionMeta | null;
 }
 
 export interface ConfirmReceiptInput {
@@ -134,15 +140,54 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
           let resolvedBaseUnit: "KG" | "L" | "UNIT" = item.baseUnit || "UNIT";
 
           if (!item.excluded && !item.isDiscount) {
+            const cleanBarcode = normalizeBarcode(item.barcode || item.nutrition?.ean);
+            const itemNutrition = item.nutrition || null;
+
             if (item.mode === "link_existing" && item.productId) {
               resolvedProductId = item.productId;
               const existingProd = await tx.product.findUnique({
                 where: { id: item.productId },
-                select: { id: true, baseUnit: true },
+                select: {
+                  id: true,
+                  baseUnit: true,
+                  nutriScore: true,
+                  novaGroup: true,
+                  proteinPer100g: true,
+                  kcalPer100g: true,
+                  ean: true,
+                  nutritionUpdatedAt: true,
+                },
               });
               if (existingProd) {
                 // Strict BaseUnit Lock: force item to use canonical product baseUnit
                 resolvedBaseUnit = existingProd.baseUnit as "KG" | "L" | "UNIT";
+
+                if (itemNutrition || cleanBarcode) {
+                  const linkPatch: Prisma.ProductUpdateInput = {};
+                  if (!existingProd.nutriScore && itemNutrition?.nutriScore) {
+                    linkPatch.nutriScore = itemNutrition.nutriScore;
+                  }
+                  if (existingProd.novaGroup === null && itemNutrition?.novaGroup) {
+                    linkPatch.novaGroup = itemNutrition.novaGroup;
+                  }
+                  if (existingProd.proteinPer100g === null && itemNutrition?.proteinPer100g != null) {
+                    linkPatch.proteinPer100g = new Prisma.Decimal(itemNutrition.proteinPer100g);
+                  }
+                  if (existingProd.kcalPer100g === null && itemNutrition?.kcalPer100g != null) {
+                    linkPatch.kcalPer100g = new Prisma.Decimal(itemNutrition.kcalPer100g);
+                  }
+                  if (!existingProd.ean && cleanBarcode) {
+                    linkPatch.ean = cleanBarcode;
+                  }
+                  if (Object.keys(linkPatch).length > 0) {
+                    linkPatch.nutritionSource = "openfoodfacts";
+                    linkPatch.nutritionUpdatedAt = new Date();
+                    await tx.product.update({
+                      where: { id: existingProd.id },
+                      data: linkPatch,
+                    });
+                  }
+                }
               }
             } else {
               // Mode: create_new (or fallback if no product linked)
@@ -178,6 +223,23 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
                     category,
                     baseUnit,
                     isStaple,
+                    ...(itemNutrition || cleanBarcode
+                      ? {
+                          nutriScore: itemNutrition?.nutriScore ?? null,
+                          novaGroup: itemNutrition?.novaGroup ?? null,
+                          proteinPer100g:
+                            itemNutrition?.proteinPer100g != null
+                              ? new Prisma.Decimal(itemNutrition.proteinPer100g)
+                              : null,
+                          kcalPer100g:
+                            itemNutrition?.kcalPer100g != null
+                              ? new Prisma.Decimal(itemNutrition.kcalPer100g)
+                              : null,
+                          ean: cleanBarcode ?? null,
+                          nutritionSource: "openfoodfacts",
+                          nutritionUpdatedAt: new Date(),
+                        }
+                      : {}),
                   },
                 });
                 resolvedBaseUnit = product.baseUnit as "KG" | "L" | "UNIT";
@@ -186,6 +248,27 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
                 const updateData: Prisma.ProductUpdateInput = {};
                 if (isStaple && !product.isStaple) updateData.isStaple = true;
                 if (baseUnit && product.baseUnit !== baseUnit) updateData.baseUnit = baseUnit;
+                if (itemNutrition || cleanBarcode) {
+                  if (!product.nutriScore && itemNutrition?.nutriScore) {
+                    updateData.nutriScore = itemNutrition.nutriScore;
+                  }
+                  if (product.novaGroup === null && itemNutrition?.novaGroup) {
+                    updateData.novaGroup = itemNutrition.novaGroup;
+                  }
+                  if (product.proteinPer100g === null && itemNutrition?.proteinPer100g != null) {
+                    updateData.proteinPer100g = new Prisma.Decimal(itemNutrition.proteinPer100g);
+                  }
+                  if (product.kcalPer100g === null && itemNutrition?.kcalPer100g != null) {
+                    updateData.kcalPer100g = new Prisma.Decimal(itemNutrition.kcalPer100g);
+                  }
+                  if (!product.ean && cleanBarcode) {
+                    updateData.ean = cleanBarcode;
+                  }
+                  if (itemNutrition || cleanBarcode) {
+                    updateData.nutritionSource = product.nutritionSource || "openfoodfacts";
+                    updateData.nutritionUpdatedAt = product.nutritionUpdatedAt || new Date();
+                  }
+                }
                 if (Object.keys(updateData).length > 0) {
                   await tx.product.update({
                     where: { id: product.id },
@@ -221,6 +304,7 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
                   productId: resolvedProductId,
                   unitMeasurePerPack: isVariable ? null : new Prisma.Decimal(measurePerOne),
                   isVariableWeight: isVariable,
+                  ...(cleanBarcode ? { barcode: cleanBarcode } : {}),
                 },
                 create: {
                   storeId,
@@ -228,6 +312,7 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
                   productId: resolvedProductId,
                   unitMeasurePerPack: isVariable ? null : new Prisma.Decimal(measurePerOne),
                   isVariableWeight: isVariable,
+                  ...(cleanBarcode ? { barcode: cleanBarcode } : {}),
                 },
               });
             }

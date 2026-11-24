@@ -78,6 +78,17 @@ export async function ensureDatabaseSchema() {
       `).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "tokenExpiresAt" TIMESTAMP(3);`).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "consecutiveFailures" INTEGER NOT NULL DEFAULT 0;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "nutriScore" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "novaGroup" INTEGER;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "proteinPer100g" DECIMAL(6,2);`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "kcalPer100g" DECIMAL(7,2);`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "ean" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "nutritionSource" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "nutritionUpdatedAt" TIMESTAMP(3);`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Product_ean_idx" ON "Product"("ean");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Product_novaGroup_idx" ON "Product"("novaGroup");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "ProductAlias" ADD COLUMN IF NOT EXISTS "barcode" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ProductAlias_barcode_idx" ON "ProductAlias"("barcode");`).catch(() => null);
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS "MonthlyBudget" (
           "id" TEXT NOT NULL,
@@ -193,6 +204,13 @@ export async function ensureDatabaseSchema() {
         "category" TEXT NOT NULL,
         "baseUnit" "BaseUnit" NOT NULL DEFAULT 'UNIT',
         "isStaple" BOOLEAN NOT NULL DEFAULT false,
+        "nutriScore" TEXT,
+        "novaGroup" INTEGER,
+        "proteinPer100g" DECIMAL(6,2),
+        "kcalPer100g" DECIMAL(7,2),
+        "ean" TEXT,
+        "nutritionSource" TEXT,
+        "nutritionUpdatedAt" TIMESTAMP(3),
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
       );`,
@@ -204,6 +222,7 @@ export async function ensureDatabaseSchema() {
         "productId" TEXT NOT NULL,
         "unitMeasurePerPack" DECIMAL(10,3),
         "isVariableWeight" BOOLEAN NOT NULL DEFAULT false,
+        "barcode" TEXT,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "ProductAlias_pkey" PRIMARY KEY ("id")
       );`,
@@ -258,7 +277,10 @@ export async function ensureDatabaseSchema() {
       `CREATE UNIQUE INDEX IF NOT EXISTS "Product_slug_key" ON "Product"("slug");`,
       `CREATE INDEX IF NOT EXISTS "Product_category_idx" ON "Product"("category");`,
       `CREATE INDEX IF NOT EXISTS "Product_isStaple_idx" ON "Product"("isStaple");`,
+      `CREATE INDEX IF NOT EXISTS "Product_ean_idx" ON "Product"("ean");`,
+      `CREATE INDEX IF NOT EXISTS "Product_novaGroup_idx" ON "Product"("novaGroup");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "ProductAlias_storeId_rawAlias_key" ON "ProductAlias"("storeId", "rawAlias");`,
+      `CREATE INDEX IF NOT EXISTS "ProductAlias_barcode_idx" ON "ProductAlias"("barcode");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "MonthlyBudget_userId_category_key" ON "MonthlyBudget"("userId", "category");`,
       `CREATE INDEX IF NOT EXISTS "MonthlyBudget_userId_idx" ON "MonthlyBudget"("userId");`,
       `CREATE INDEX IF NOT EXISTS "ReceiptItem_productId_confirmed_excluded_idx" ON "ReceiptItem"("productId", "confirmed", "excluded");`,

@@ -15,6 +15,7 @@ import {
   Flame,
   ChevronDown,
 } from "lucide-react";
+import { getNutriScoreBadgeStyle } from "@/lib/analytics/nutrition";
 
 export interface CatalogSighting {
   purchaseDate: string;
@@ -32,6 +33,9 @@ export interface CatalogProduct {
   category: string;
   baseUnit: "KG" | "L" | "UNIT";
   isStaple: boolean;
+  nutriScore?: string | null;
+  novaGroup?: number | null;
+  ean?: string | null;
   sightings: CatalogSighting[];
 }
 
@@ -475,6 +479,7 @@ function ProductsContent({ products }: { products: CatalogProduct[] }) {
           {processedProducts.map((p) => {
             const isNegative = p.periodChangePercent < 0;
             const isPositive = p.periodChangePercent > 0;
+            const nsBadge = getNutriScoreBadgeStyle(p.nutriScore);
 
             return (
               <Link
@@ -489,6 +494,14 @@ function ProductsContent({ products }: { products: CatalogProduct[] }) {
                       <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/60 text-[10px] font-medium whitespace-nowrap shrink-0">
                         {p.category}
                       </span>
+                      {nsBadge && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-bold whitespace-nowrap shrink-0 ${nsBadge.className}`}
+                          title={`Nutri-Score ${nsBadge.letter}`}
+                        >
+                          NS {nsBadge.letter}
+                        </span>
+                      )}
                       {p.isStaple && (
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" title="Staple item" />
                       )}

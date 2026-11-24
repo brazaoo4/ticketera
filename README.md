@@ -163,9 +163,10 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - **One-Click Supermarket Catalog Lookup:** Integrated OpenFoodFacts Spain lookup with store-brand matching (Hacendado, Milbona, etc.) to autofill package weights and canonical names.
 - **Rapid "Confirm & Next Pending" Queue:** Confirming trained aliases saves memory rules (`unitMeasurePerPack`, `isVariableWeight`), auto-applying sizes to subsequent tickets in the batch.
 
-### 📊 Deep Inflation & Budget Intelligence
+### 📊 Deep Inflation, Budget & Nutrition Intelligence
 - **"Tu IPC Real" (Personal Inflation Rate):** Computes your consumption-weighted personal inflation index against a general staple basket benchmark.
 - **Monthly Category Budgets & Pacing (`/my-stats`):** Set monthly spending targets overall or per grocery category with end-of-month pacing projections (`"On track for €X vs. €Y budget"`) and store-share breakdowns.
+- **Nutrition & Protein Value Insights:** Caches lightweight OpenFoodFacts Nutri-Score, NOVA group, protein, and kcal/100g metadata to surface **protein per €** rankings and ultra-processed (`NOVA 4`) basket share.
 - **Shrinkflation Radar ("Radar de Reduflación"):** Detects stealth pack reductions ($\ge 5\%$) where the shelf pack price remained identical ($\pm 10\%$) while the price per kg or liter spiked ($\ge 5\%$).
 - **Spanish Grocery Tax & IVA Tracker:** Visualizes printed tax breakdown tables (0%–4% Superreducido, 5%–10% Reducido, 21% General) and tracks effective tax rates over time.
 - **Multi-Store Basket Comparator (`/compare`):** Select products to simulate weekly shopping across chains, comparing single-store totals against a "Smart Split Basket" optimal route.

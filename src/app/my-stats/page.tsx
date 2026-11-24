@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getShrinkflationIncidents } from "@/lib/analytics/shrinkflation";
+import { NON_FOOD_CATEGORIES } from "@/lib/analytics/nutrition";
 import { MyStatsClient, type StatsReceipt, type StatsItem } from "./my-stats-client";
 import { EmptyStateDemoCard } from "@/components/demo/empty-state-demo-card";
 
@@ -35,6 +36,11 @@ export default async function MyStatsPage() {
                 category: true,
                 baseUnit: true,
                 isStaple: true,
+                nutriScore: true,
+                novaGroup: true,
+                proteinPer100g: true,
+                kcalPer100g: true,
+                nutritionUpdatedAt: true,
               },
             },
           },
@@ -103,27 +109,52 @@ export default async function MyStatsPage() {
     },
   }));
 
+  const untaggedFoodIds = new Set<string>();
   const serializedItems: StatsItem[] = receipts.flatMap((r) =>
-    r.items.map((item) => ({
-      id: item.id,
-      receiptId: r.id,
-      purchaseDate: r.purchaseDate.toISOString(),
-      storeName: r.store.name,
-      storeBrandHex: r.store.brandHex,
-      storeSlug: r.store.slug,
-      rawName: item.rawName,
-      suggestedName: item.suggestedName,
-      category: item.product?.category || item.suggestedCat || "Other",
-      quantity: Number(item.quantity) || 1,
-      unitPrice: Number(item.unitPrice) || 0,
-      totalPrice: Number(item.totalPrice) || 0,
-      baseUnit: item.baseUnit as "KG" | "L" | "UNIT",
-      unitMeasure: Number(item.unitMeasure) || 1,
-      pricePerBaseUnit: Number(item.pricePerBaseUnit) || 0,
-      productSlug: item.product?.slug || null,
-      productName: item.product?.displayName || item.suggestedName,
-      isStaple: item.product?.isStaple ?? false,
-    }))
+    r.items.map((item) => {
+      const cat = item.product?.category || item.suggestedCat || "Other";
+      if (
+        item.product &&
+        !NON_FOOD_CATEGORIES.has(cat) &&
+        item.product.nutritionUpdatedAt === null
+      ) {
+        untaggedFoodIds.add(item.product.id);
+      }
+
+      return {
+        id: item.id,
+        receiptId: r.id,
+        purchaseDate: r.purchaseDate.toISOString(),
+        storeName: r.store.name,
+        storeBrandHex: r.store.brandHex,
+        storeSlug: r.store.slug,
+        rawName: item.rawName,
+        suggestedName: item.suggestedName,
+        category: cat,
+        quantity: Number(item.quantity) || 1,
+        unitPrice: Number(item.unitPrice) || 0,
+        totalPrice: Number(item.totalPrice) || 0,
+        baseUnit: item.baseUnit as "KG" | "L" | "UNIT",
+        unitMeasure: Number(item.unitMeasure) || 1,
+        pricePerBaseUnit: Number(item.pricePerBaseUnit) || 0,
+        productId: item.product?.id || null,
+        productSlug: item.product?.slug || null,
+        productName: item.product?.displayName || item.suggestedName,
+        isStaple: item.product?.isStaple ?? false,
+        nutriScore: item.product?.nutriScore ?? null,
+        novaGroup: item.product?.novaGroup ?? null,
+        proteinPer100g:
+          item.product?.proteinPer100g !== null &&
+          item.product?.proteinPer100g !== undefined
+            ? Number(item.product.proteinPer100g)
+            : null,
+        kcalPer100g:
+          item.product?.kcalPer100g !== null &&
+          item.product?.kcalPer100g !== undefined
+            ? Number(item.product.kcalPer100g)
+            : null,
+      };
+    })
   );
 
   const serializedStapleSightings = storeWideStapleItems.map((s) => ({
@@ -144,6 +175,7 @@ export default async function MyStatsPage() {
       stapleSightings={serializedStapleSightings}
       shrinkflationIncidents={shrinkflationIncidents}
       initialBudgets={serializedBudgets}
+      untaggedFoodProductCount={untaggedFoodIds.size}
     />
   );
 }

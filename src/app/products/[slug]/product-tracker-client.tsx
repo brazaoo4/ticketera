@@ -28,16 +28,26 @@ import {
   X,
   Pencil,
   Star,
+  Leaf,
+  RefreshCw,
 } from "lucide-react";
 import {
   deleteSightingAction,
   updateProductDetailsAction,
   normalizeProductHistoryAction,
   updateSightingAction,
+  fetchAndCacheProductNutritionAction,
 } from "./actions";
 import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
 import { useRouter } from "next/navigation";
 import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation-types";
+import {
+  NON_FOOD_CATEGORIES,
+  computeKcalPerEuro,
+  computeProteinPerEuro,
+  getNovaGroupMeta,
+  getNutriScoreBadgeStyle,
+} from "@/lib/analytics/nutrition";
 
 export function formatPackBadge(
   packSize: number,
@@ -79,6 +89,13 @@ export interface ProductTrackerClientProps {
     category: string;
     baseUnit: "KG" | "L" | "UNIT";
     isStaple: boolean;
+    nutriScore?: string | null;
+    novaGroup?: number | null;
+    proteinPer100g?: number | null;
+    kcalPer100g?: number | null;
+    ean?: string | null;
+    nutritionSource?: string | null;
+    nutritionUpdatedAt?: string | null;
   };
   sightings: SightingObservation[];
   aliases: Array<{
@@ -92,6 +109,7 @@ export interface ProductTrackerClientProps {
   }>;
   canDelete?: boolean;
   isAdmin?: boolean;
+  isAuthenticated?: boolean;
   shrinkflationIncidents?: ShrinkflationIncident[];
 }
 
@@ -118,6 +136,7 @@ export function ProductTrackerClient({
   shrinkflationIncidents = [],
   canDelete = false,
   isAdmin = false,
+  isAuthenticated = false,
 }: ProductTrackerClientProps) {
   const router = useRouter();
   const [productData, setProductData] = useState(product);
@@ -146,8 +165,27 @@ export function ProductTrackerClient({
   const [editCategory, setEditCategory] = useState(product.category);
   const [editBaseUnit, setEditBaseUnit] = useState<"KG" | "L" | "UNIT">(product.baseUnit);
   const [editIsStaple, setEditIsStaple] = useState(product.isStaple);
+  const [editNutriScore, setEditNutriScore] = useState<string>(product.nutriScore || "");
+  const [editNovaGroup, setEditNovaGroup] = useState<string>(
+    product.novaGroup ? String(product.novaGroup) : ""
+  );
+  const [editProtein, setEditProtein] = useState<string>(
+    product.proteinPer100g !== null && product.proteinPer100g !== undefined
+      ? String(product.proteinPer100g)
+      : ""
+  );
+  const [editKcal, setEditKcal] = useState<string>(
+    product.kcalPer100g !== null && product.kcalPer100g !== undefined
+      ? String(product.kcalPer100g)
+      : ""
+  );
+  const [editEan, setEditEan] = useState<string>(product.ean || "");
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // Nutrition Lookup state
+  const [isFetchingNutrition, setIsFetchingNutrition] = useState(false);
+  const [nutritionNotice, setNutritionNotice] = useState<string | null>(null);
 
   // Normalize product history modal state
   const [isNormalizeModalOpen, setIsNormalizeModalOpen] = useState(false);
@@ -200,6 +238,19 @@ export function ProductTrackerClient({
     setEditCategory(product.category);
     setEditBaseUnit(product.baseUnit);
     setEditIsStaple(product.isStaple);
+    setEditNutriScore(product.nutriScore || "");
+    setEditNovaGroup(product.novaGroup ? String(product.novaGroup) : "");
+    setEditProtein(
+      product.proteinPer100g !== null && product.proteinPer100g !== undefined
+        ? String(product.proteinPer100g)
+        : ""
+    );
+    setEditKcal(
+      product.kcalPer100g !== null && product.kcalPer100g !== undefined
+        ? String(product.kcalPer100g)
+        : ""
+    );
+    setEditEan(product.ean || "");
     setNormalizeBaseUnit(product.baseUnit);
     setAliasFormats(
       aliases.map((a) => ({
@@ -318,12 +369,43 @@ export function ProductTrackerClient({
     e.preventDefault();
     setIsSavingProduct(true);
     setEditError(null);
+    const parsedNutri =
+      editNutriScore === "a" ||
+      editNutriScore === "b" ||
+      editNutriScore === "c" ||
+      editNutriScore === "d" ||
+      editNutriScore === "e"
+        ? editNutriScore
+        : null;
+    const parsedNovaNum = parseInt(editNovaGroup, 10);
+    const parsedNova =
+      parsedNovaNum === 1 ||
+      parsedNovaNum === 2 ||
+      parsedNovaNum === 3 ||
+      parsedNovaNum === 4
+        ? parsedNovaNum
+        : null;
+    const parsedProtein =
+      editProtein.trim() !== "" && Number.isFinite(parseFloat(editProtein))
+        ? parseFloat(editProtein)
+        : null;
+    const parsedKcal =
+      editKcal.trim() !== "" && Number.isFinite(parseFloat(editKcal))
+        ? parseFloat(editKcal)
+        : null;
+    const cleanEan = editEan.trim() || null;
+
     try {
       const res = await updateProductDetailsAction(productData.id, {
         displayName: editName,
         category: editCategory,
         baseUnit: editBaseUnit,
         isStaple: editIsStaple,
+        nutriScore: parsedNutri,
+        novaGroup: parsedNova,
+        proteinPer100g: parsedProtein,
+        kcalPer100g: parsedKcal,
+        ean: cleanEan,
       });
       if (res.success) {
         setProductData((prev) => ({
@@ -332,6 +414,11 @@ export function ProductTrackerClient({
           category: editCategory,
           baseUnit: editBaseUnit,
           isStaple: editIsStaple,
+          nutriScore: parsedNutri,
+          novaGroup: parsedNova,
+          proteinPer100g: parsedProtein,
+          kcalPer100g: parsedKcal,
+          ean: cleanEan,
         }));
         setIsEditModalOpen(false);
         router.refresh();
@@ -342,6 +429,47 @@ export function ProductTrackerClient({
       setEditError(err instanceof Error ? err.message : "Error saving product.");
     } finally {
       setIsSavingProduct(false);
+    }
+  };
+
+  const handleFetchNutrition = async (barcodeOverride?: string) => {
+    setIsFetchingNutrition(true);
+    setNutritionNotice(null);
+    try {
+      const res = await fetchAndCacheProductNutritionAction(
+        productData.id,
+        barcodeOverride
+      );
+      if (!res.success) {
+        setNutritionNotice(res.error || "Could not fetch nutrition metadata.");
+      } else if (!res.found || !res.nutrition) {
+        setNutritionNotice(
+          barcodeOverride
+            ? `No OpenFoodFacts entry matched EAN ${barcodeOverride}.`
+            : "No matching OpenFoodFacts nutrition profile found."
+        );
+      } else {
+        setProductData((prev) => ({
+          ...prev,
+          nutriScore: res.nutrition!.nutriScore,
+          novaGroup: res.nutrition!.novaGroup,
+          proteinPer100g: res.nutrition!.proteinPer100g,
+          kcalPer100g: res.nutrition!.kcalPer100g,
+          ean: res.nutrition!.ean,
+          nutritionSource: res.nutrition!.nutritionSource,
+          nutritionUpdatedAt: res.nutrition!.nutritionUpdatedAt,
+        }));
+        setNutritionNotice(
+          res.matchName
+            ? `Cached from OpenFoodFacts: ${res.matchName}`
+            : "Nutrition metadata updated from OpenFoodFacts."
+        );
+        router.refresh();
+      }
+    } catch {
+      setNutritionNotice("Error contacting OpenFoodFacts.");
+    } finally {
+      setIsFetchingNutrition(false);
     }
   };
 
@@ -846,6 +974,125 @@ export function ProductTrackerClient({
             </div>
           </div>
         </div>
+
+        {/* Unobtrusive Nutrition & Protein Value Bar (Food products only) */}
+        {!NON_FOOD_CATEGORIES.has(productData.category) && (() => {
+          const nsBadge = getNutriScoreBadgeStyle(productData.nutriScore);
+          const novaMeta = getNovaGroupMeta(productData.novaGroup);
+          const cheapestNormalizedPrice =
+            priceMode === "unit" && cheapestNow ? cheapestNow.currentPrice : null;
+          const proteinPerEuro =
+            cheapestNormalizedPrice !== null
+              ? computeProteinPerEuro(
+                  productData.proteinPer100g,
+                  cheapestNormalizedPrice,
+                  productData.baseUnit
+                )
+              : null;
+          const kcalPerEuro =
+            cheapestNormalizedPrice !== null
+              ? computeKcalPerEuro(
+                  productData.kcalPer100g,
+                  cheapestNormalizedPrice,
+                  productData.baseUnit
+                )
+              : null;
+          const hasNutrition = Boolean(
+            nsBadge ||
+              novaMeta ||
+              (productData.proteinPer100g !== null &&
+                productData.proteinPer100g !== undefined) ||
+              (productData.kcalPer100g !== null &&
+                productData.kcalPer100g !== undefined)
+          );
+
+          if (!hasNutrition && !isAuthenticated) return null;
+
+          return (
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/60 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                  <Leaf className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>Nutrition</span>
+                </span>
+
+                {nsBadge && (
+                  <span
+                    className={`px-2 py-0.5 rounded-md border font-mono text-[11px] font-bold whitespace-nowrap shrink-0 ${nsBadge.className}`}
+                  >
+                    Nutri-Score {nsBadge.letter}
+                  </span>
+                )}
+
+                {novaMeta && (
+                  <span
+                    className={`px-2 py-0.5 rounded-md border font-mono text-[11px] font-bold whitespace-nowrap shrink-0 ${novaMeta.className}`}
+                    title={novaMeta.label}
+                  >
+                    {novaMeta.shortLabel}
+                  </span>
+                )}
+
+                {productData.proteinPer100g !== null &&
+                  productData.proteinPer100g !== undefined && (
+                    <span className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-[11px] text-zinc-200 whitespace-nowrap shrink-0 tabular-nums">
+                      Protein: <strong>{productData.proteinPer100g}g</strong>/100g
+                    </span>
+                  )}
+
+                {productData.kcalPer100g !== null &&
+                  productData.kcalPer100g !== undefined && (
+                    <span className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-[11px] text-zinc-300 whitespace-nowrap shrink-0 tabular-nums">
+                      {productData.kcalPer100g} kcal/100g
+                    </span>
+                  )}
+
+                {proteinPerEuro !== null && (
+                  <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 font-mono text-[11px] font-bold text-emerald-400 whitespace-nowrap shrink-0 tabular-nums">
+                    {proteinPerEuro.toFixed(1)} g protein / €
+                    {kcalPerEuro ? ` · ${kcalPerEuro} kcal/€` : ""}
+                  </span>
+                )}
+
+                {productData.ean && (
+                  <span className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-[10px] text-zinc-400 whitespace-nowrap shrink-0 tabular-nums">
+                    EAN {productData.ean}
+                  </span>
+                )}
+
+                {!hasNutrition && (
+                  <span className="text-zinc-500 font-mono text-[11px]">
+                    No cached nutritional metadata yet.
+                  </span>
+                )}
+              </div>
+
+              {isAuthenticated && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void handleFetchNutrition()}
+                    disabled={isFetchingNutrition}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-emerald-400 text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw
+                      className={`w-3 h-3 shrink-0 ${
+                        isFetchingNutrition ? "animate-spin text-emerald-400" : ""
+                      }`}
+                    />
+                    <span>{hasNutrition ? "Refresh OFF" : "Fetch Nutrition"}</span>
+                  </button>
+                </div>
+              )}
+
+              {nutritionNotice && (
+                <div className="w-full text-[11px] font-mono text-zinc-400 pt-1 border-t border-zinc-800/60">
+                  {nutritionNotice}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* ⚠️ SHRINKFLATION ALERT BANNER */}
@@ -1444,6 +1691,80 @@ export function ProductTrackerClient({
                     </p>
                   </div>
                 </label>
+              </div>
+
+              {/* Optional Cached Nutrition & Barcode Metadata */}
+              <div className="pt-2 border-t border-zinc-800/80 space-y-3">
+                <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                  Nutrition & Barcode Cache (Optional)
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono text-zinc-400 uppercase">Nutri-Score</label>
+                    <select
+                      value={editNutriScore}
+                      onChange={(e) => setEditNutriScore(e.target.value)}
+                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="">—</option>
+                      <option value="a">A</option>
+                      <option value="b">B</option>
+                      <option value="c">C</option>
+                      <option value="d">D</option>
+                      <option value="e">E</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono text-zinc-400 uppercase">NOVA</label>
+                    <select
+                      value={editNovaGroup}
+                      onChange={(e) => setEditNovaGroup(e.target.value)}
+                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="">—</option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono text-zinc-400 uppercase">Protein / 100g</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      value={editProtein}
+                      onChange={(e) => setEditProtein(e.target.value)}
+                      placeholder="g"
+                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 tabular-nums"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono text-zinc-400 uppercase">kcal / 100g</label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="1000"
+                      value={editKcal}
+                      onChange={(e) => setEditKcal(e.target.value)}
+                      placeholder="kcal"
+                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 tabular-nums"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-mono text-zinc-400 uppercase">EAN / Barcode</label>
+                  <input
+                    type="text"
+                    value={editEan}
+                    onChange={(e) => setEditEan(e.target.value)}
+                    placeholder="e.g. 8480000105302"
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 tabular-nums"
+                  />
+                </div>
               </div>
 
               <div className="pt-3.5 border-t border-zinc-800 flex items-center justify-end gap-3 shrink-0">

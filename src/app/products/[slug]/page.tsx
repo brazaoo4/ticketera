@@ -95,12 +95,24 @@ export default async function ProductDetailPage({
           category: product.category,
           baseUnit: product.baseUnit as "KG" | "L" | "UNIT",
           isStaple: product.isStaple,
+          nutriScore: product.nutriScore ?? null,
+          novaGroup: product.novaGroup ?? null,
+          proteinPer100g:
+            product.proteinPer100g !== null ? Number(product.proteinPer100g) : null,
+          kcalPer100g:
+            product.kcalPer100g !== null ? Number(product.kcalPer100g) : null,
+          ean: product.ean ?? null,
+          nutritionSource: product.nutritionSource ?? null,
+          nutritionUpdatedAt: product.nutritionUpdatedAt
+            ? product.nutritionUpdatedAt.toISOString()
+            : null,
         }}
         sightings={sightings}
         aliases={aliases}
         shrinkflationIncidents={shrinkflationIncidents}
         canDelete={canDelete}
         isAdmin={isAdmin}
+        isAuthenticated={Boolean(session?.user)}
       />
     </div>
   );

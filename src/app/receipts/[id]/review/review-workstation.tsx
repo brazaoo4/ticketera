@@ -41,7 +41,14 @@ import {
   reopenReceiptAction,
   ReviewItemInput,
 } from "./actions";
-import { type CatalogLookupResult } from "@/lib/catalog/parser";
+import {
+  type CatalogLookupResult,
+  type ProductNutritionMeta,
+} from "@/lib/catalog/parser";
+import {
+  getNovaGroupMeta,
+  getNutriScoreBadgeStyle,
+} from "@/lib/analytics/nutrition";
 
 export interface SerializedStore {
   id: string;
@@ -112,6 +119,8 @@ interface ExtendedItemState extends ReviewItemInput {
   isEditing?: boolean;
   isCustomManual?: boolean;
   countInSanityTotal?: boolean;
+  barcode?: string | null;
+  nutrition?: ProductNutritionMeta | null;
   matchedProductInfo?: {
     displayName: string;
     category: string;
@@ -434,6 +443,8 @@ export function ReviewWorkstation({
         pricePerBaseUnit: Number(i.pricePerBaseUnit) || 0,
         isDiscount: !!i.isDiscount,
         excluded: !!i.excluded,
+        barcode: i.barcode || null,
+        nutrition: i.nutrition || null,
       }));
 
       const res = await confirmReceiptAction({
@@ -1409,13 +1420,23 @@ function ItemCard({
   const handleApplyCatalogMatch = (match: CatalogLookupResult) => {
     const effectiveUnit = isLinked && item.matchedProductInfo
       ? item.matchedProductInfo.baseUnit
-      : match.baseUnit;
-    const newTotalMeasure = Number((currentQty * match.unitMeasurePerPack).toFixed(3));
+      : match.hasParsedQuantity !== false
+      ? match.baseUnit
+      : item.baseUnit;
+    const newTotalMeasure =
+      match.hasParsedQuantity !== false && match.unitMeasurePerPack > 0
+        ? Number((currentQty * match.unitMeasurePerPack).toFixed(3))
+        : item.unitMeasure;
     onUpdateItem(index, {
+      ...(isModeCreateNew && match.ean && match.productName
+        ? { newProductName: match.productName, suggestedName: match.productName }
+        : {}),
       baseUnit: effectiveUnit,
       newProductBaseUnit: isLinked ? undefined : effectiveUnit,
       unitMeasure: newTotalMeasure,
       isVariableWeight: false,
+      barcode: match.ean || match.nutrition?.ean || item.barcode || null,
+      nutrition: match.nutrition || item.nutrition || null,
     });
     setIsCatalogOpen(false);
   };
@@ -2038,8 +2059,29 @@ function ItemCard({
                         <div className="font-bold text-zinc-200 truncate">
                           {m.productName}
                         </div>
-                        <div className="text-[11px] text-zinc-400 font-mono">
-                          {m.brand ? `${m.brand} • ` : ""}Pack: <strong className="text-emerald-300">{m.rawQuantityText}</strong>
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400 font-mono">
+                          <span>
+                            {m.brand ? `${m.brand} • ` : ""}Pack:{" "}
+                            <strong className="text-emerald-300">
+                              {m.rawQuantityText || "Unknown size"}
+                            </strong>
+                          </span>
+                          {(() => {
+                            const ns = getNutriScoreBadgeStyle(m.nutrition?.nutriScore);
+                            return ns ? (
+                              <span className={`px-1 rounded border text-[10px] ${ns.className}`}>
+                                NS {ns.letter}
+                              </span>
+                            ) : null;
+                          })()}
+                          {(() => {
+                            const nova = getNovaGroupMeta(m.nutrition?.novaGroup);
+                            return nova ? (
+                              <span className={`px-1 rounded border text-[10px] ${nova.className}`}>
+                                {nova.shortLabel}
+                              </span>
+                            ) : null;
+                          })()}
                         </div>
                       </div>
                       <div className="shrink-0 flex items-center gap-2">
