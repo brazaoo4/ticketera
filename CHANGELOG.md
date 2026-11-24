@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.6.0](https://github.com/brazaoo4/ticketera/compare/v2.5.1...v2.6.0) (2026-11-24)
+
+
+### Features
+
+* **admin:** add one-click duplicate product merge workflow and fix alias reassignment ([5d26bb2](https://github.com/brazaoo4/ticketera/commit/5d26bb27c668c2ace7c8e8b03299cadf3c03558e))
+* **backup:** add portable ZIP backup bundle and safe admin restore flow ([f369c49](https://github.com/brazaoo4/ticketera/commit/f369c49d628bd016657a4a9ecccc714742d6d3bc))
+* **barcode:** add secondary BarcodeDetector and OpenFoodFacts EAN lookup ([7369e1e](https://github.com/brazaoo4/ticketera/commit/7369e1e43a9e932fa299b5e3ea464c436a290c79))
+* **budgets:** add monthly category budgets, pacing projections, and store-share breakdown ([92fe112](https://github.com/brazaoo4/ticketera/commit/92fe112d58d61cfcf55416764a4e2a8fc272ceed))
+* **nutrition:** cache OpenFoodFacts nutrition metadata with protein/€ rankings and NOVA 4 share ([dbdbd35](https://github.com/brazaoo4/ticketera/commit/dbdbd35df533f2988bcd80a6fc7639785383d6e4))
+
 ## [2.5.1](https://github.com/brazaoo4/ticketera/compare/v2.5.0...v2.5.1) (2026-11-24)
 
 
