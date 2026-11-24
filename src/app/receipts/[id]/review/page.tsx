@@ -1,12 +1,12 @@
 import React from "react";
 import fs from "fs";
-import path from "path";
 import { requireAuthUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { ensureFreshDiaTicketWebp } from "@/lib/integrations/dia/render-ticket";
+import { getReceiptArtifactPath } from "@/lib/receipts/preprocess";
 import { ReviewWorkstation, SerializedReceipt, SerializedStore } from "./review-workstation";
 
 export const dynamic = "force-dynamic";
@@ -144,16 +144,14 @@ export default async function ReceiptReviewPage({
 
   await ensureFreshDiaTicketWebp(receipt.id).catch(() => false);
 
-  const uploadDir =
-    process.env.UPLOAD_DIR ||
-    (process.env.NODE_ENV === "production"
-      ? "/app/uploads"
-      : path.join(process.cwd(), "uploads"));
+  const pdfPath = getReceiptArtifactPath(receipt.id, "pdf");
+  const jsonPath = getReceiptArtifactPath(receipt.id, "json");
+  const webpPath = getReceiptArtifactPath(receipt.id, "webp");
+
   const hasOriginalPdf =
     receipt.sourceFile.toLowerCase().endsWith(".pdf") ||
-    fs.existsSync(path.join(uploadDir, `${receipt.id}.pdf`));
-  const isDigitalDia = fs.existsSync(path.join(uploadDir, `${receipt.id}.json`));
-  const webpPath = path.join(uploadDir, `${receipt.id}.webp`);
+    fs.existsSync(pdfPath);
+  const isDigitalDia = fs.existsSync(jsonPath);
   const fileVersion = fs.existsSync(webpPath)
     ? String(Math.trunc(fs.statSync(webpPath).mtimeMs))
     : undefined;

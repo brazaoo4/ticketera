@@ -5,8 +5,11 @@ import { prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import fs from "fs";
-import path from "path";
-import { compressReceiptImage, UPLOAD_DIR } from "@/lib/receipts/preprocess";
+import {
+  compressReceiptImage,
+  getReceiptArtifactPath,
+  getReceiptFilePath,
+} from "@/lib/receipts/preprocess";
 import {
   hasConfiguredAiProvider,
   normalizeCanonicalCategory,
@@ -98,7 +101,7 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
   try {
     const existing = await prisma.receipt.findUnique({
       where: { id: receiptId },
-      select: { userId: true },
+      select: { id: true, userId: true },
     });
 
     if (!existing) {
@@ -277,10 +280,10 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
     );
 
     // Post-compress receipt image for long-term storage
-    await compressReceiptImage(receiptId).catch(() => null);
+    await compressReceiptImage(existing.id).catch(() => null);
 
     // Revalidate paths so catalogue immediately reflects confirmed data
-    revalidatePath(`/receipts/${receiptId}/review`);
+    revalidatePath(`/receipts/${existing.id}/review`);
     revalidatePath("/my-receipts");
     revalidatePath("/products");
     revalidatePath("/stores");
@@ -328,7 +331,7 @@ async function loadDiaJsonItemHints(
     string,
     Array<{ discountHints: string[]; isVariableWeight: boolean; weight: number }>
   >();
-  const diaJsonPath = path.join(UPLOAD_DIR, `${receiptId}.json`);
+  const diaJsonPath = getReceiptArtifactPath(receiptId, "json");
   if (!fs.existsSync(diaJsonPath)) return hintsByRawName;
 
   try {
@@ -349,7 +352,7 @@ async function loadDiaJsonItemHints(
       hintsByRawName.set(key, list);
     }
   } catch (jsonErr) {
-    console.warn(`[EnrichAI] Could not parse DIA JSON hints for ${receiptId}:`, jsonErr);
+    console.warn("[EnrichAI] Could not parse DIA JSON hints for receipt:", receiptId, jsonErr);
   }
 
   return hintsByRawName;
@@ -420,7 +423,7 @@ export async function enrichReceiptItemsWithAIAction(receiptId: string): Promise
       };
     }
 
-    const diaHintsByRawName = await loadDiaJsonItemHints(receiptId);
+    const diaHintsByRawName = await loadDiaJsonItemHints(receipt.id);
 
     const hintConsumption = new Map<string, number>();
     const targetInputs: RawPosItemInput[] = targetItems.map((item, idx) => {
@@ -620,7 +623,7 @@ export async function reopenReceiptAction(receiptId: string) {
   try {
     const existing = await prisma.receipt.findUnique({
       where: { id: receiptId },
-      select: { userId: true },
+      select: { id: true, userId: true },
     });
 
     if (!existing) {
@@ -658,7 +661,7 @@ export async function deleteReceiptAction(receiptId: string) {
   try {
     const existing = await prisma.receipt.findUnique({
       where: { id: receiptId },
-      select: { userId: true, sourceFile: true },
+      select: { id: true, userId: true, sourceFile: true },
     });
 
     if (!existing) {
@@ -671,7 +674,7 @@ export async function deleteReceiptAction(receiptId: string) {
 
     // Delete database records
     await prisma.receipt.delete({
-      where: { id: receiptId },
+      where: { id: existing.id },
     });
 
     // Prune orphaned products with 0 receipt items
@@ -683,21 +686,15 @@ export async function deleteReceiptAction(receiptId: string) {
 
     // Try deleting physical file(s) if stored locally
     try {
-      const uploadDir =
-        process.env.UPLOAD_DIR ||
-        (process.env.NODE_ENV === "production"
-          ? "/app/uploads"
-          : path.join(process.cwd(), "uploads"));
-      const filesToUnlink = new Set<string>([
-        `${receiptId}.webp`,
-        `${receiptId}.pdf`,
-        `${receiptId}.json`,
+      const pathsToUnlink = new Set<string>([
+        getReceiptArtifactPath(existing.id, "webp"),
+        getReceiptArtifactPath(existing.id, "pdf"),
+        getReceiptArtifactPath(existing.id, "json"),
       ]);
       if (existing.sourceFile && existing.sourceFile !== "temp") {
-        filesToUnlink.add(path.basename(existing.sourceFile));
+        pathsToUnlink.add(getReceiptFilePath(existing.sourceFile));
       }
-      for (const fname of filesToUnlink) {
-        const filePath = path.join(uploadDir, fname);
+      for (const filePath of pathsToUnlink) {
         await fs.promises.unlink(filePath).catch(() => null);
       }
     } catch {
