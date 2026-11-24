@@ -37,6 +37,7 @@ import {
 import {
   confirmReceiptAction,
   deleteReceiptAction,
+  enrichReceiptItemsWithAIAction,
   reopenReceiptAction,
   ReviewItemInput,
 } from "./actions";
@@ -92,6 +93,8 @@ export interface SerializedReceipt {
   processingMs: number | null;
   sourceFile: string;
   hasOriginalPdf?: boolean;
+  fileVersion?: string;
+  isDigitalDia?: boolean;
   taxBreakdown?: TaxBreakdownBracket[] | null;
   store: SerializedStore;
   items: SerializedReceiptItem[];
@@ -137,6 +140,10 @@ export function ReviewWorkstation({
     receipt.totalAmount || 0
   );
   const [status, setStatus] = useState<"REVIEW" | "CONFIRMED">(receipt.status);
+  const [receiptAiProvider, setReceiptAiProvider] = useState<string | null>(
+    receipt.aiProvider
+  );
+  const [isEnrichingAI, setIsEnrichingAI] = useState(false);
 
   // Items State
   const [items, setItems] = useState<ExtendedItemState[]>(() => {
@@ -453,6 +460,73 @@ export function ReviewWorkstation({
     });
   };
 
+  // Enrich Receipt Item Names with AI Action
+  const handleEnrichWithAI = async () => {
+    setFeedbackError(null);
+    setFeedbackSuccess(null);
+    setIsEnrichingAI(true);
+
+    try {
+      const res = await enrichReceiptItemsWithAIAction(receipt.id);
+      if (!res.success) {
+        setFeedbackError(res.error || "AI item resolution failed.");
+        return;
+      }
+
+      if (res.nextReceiptAiProvider) {
+        setReceiptAiProvider(res.nextReceiptAiProvider);
+      }
+
+      if (res.updatedItems && res.updatedItems.length > 0) {
+        const patchMap = new Map(res.updatedItems.map((u) => [u.id, u]));
+        setItems((prev) =>
+          prev.map((item) => {
+            const patch = item.id ? patchMap.get(item.id) : undefined;
+            if (!patch) return item;
+            const isLinked = Boolean(patch.productId && patch.product);
+            return {
+              ...item,
+              suggestedName: patch.suggestedName,
+              suggestedCat: patch.suggestedCat || undefined,
+              matchConfidence: patch.matchConfidence,
+              mode: isLinked ? "link_existing" : "create_new",
+              productId: patch.productId,
+              newProductName: isLinked ? undefined : patch.suggestedName,
+              newProductCategory: isLinked ? undefined : patch.suggestedCat || "Other",
+              newProductBaseUnit: isLinked ? undefined : patch.baseUnit,
+              baseUnit: patch.baseUnit,
+              unitMeasure: patch.unitMeasure,
+              pricePerBaseUnit: patch.pricePerBaseUnit,
+              excluded: patch.excluded,
+              matchedProductInfo: patch.product
+                ? {
+                    displayName: patch.product.displayName,
+                    category: patch.product.category,
+                    baseUnit: patch.product.baseUnit,
+                    isStaple: patch.product.isStaple,
+                  }
+                : undefined,
+            };
+          })
+        );
+      }
+
+      setFeedbackSuccess(
+        res.message ||
+          `AI (${res.aiProvider}) resolved ${res.enrichedCount} ${
+            res.enrichedCount === 1 ? "item" : "items"
+          }.`
+      );
+      router.refresh();
+    } catch (err) {
+      setFeedbackError(
+        err instanceof Error ? err.message : "AI item resolution failed."
+      );
+    } finally {
+      setIsEnrichingAI(false);
+    }
+  };
+
   // Reopen Receipt Action
   const handleReopenReceipt = () => {
     startTransition(async () => {
@@ -520,6 +594,8 @@ export function ReviewWorkstation({
               receiptId={receipt.id}
               sourceFile={receipt.sourceFile}
               hasOriginalPdf={receipt.hasOriginalPdf}
+              fileVersion={receipt.fileVersion}
+              isDigitalDia={receipt.isDigitalDia}
             />
           </div>
         </div>
@@ -730,7 +806,13 @@ export function ReviewWorkstation({
             {/* AI Provider Pill */}
             <span className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-300 border border-zinc-700/60 flex items-center gap-1.5 text-[11px]">
               <Sparkles className="w-3 h-3 text-emerald-400" />
-              <span>AI: {receipt.aiProvider || "AI Vision"}</span>
+              <span>
+                {receiptAiProvider === "dia-pos"
+                  ? "Source: Club Dia"
+                  : receiptAiProvider?.startsWith("dia-pos+")
+                  ? `Club Dia + ${receiptAiProvider.slice("dia-pos+".length)}`
+                  : `AI: ${receiptAiProvider || "AI Vision"}`}
+              </span>
             </span>
 
             {/* Latency Pill */}
@@ -789,6 +871,8 @@ export function ReviewWorkstation({
               receiptId={receipt.id}
               sourceFile={receipt.sourceFile}
               hasOriginalPdf={receipt.hasOriginalPdf}
+              fileVersion={receipt.fileVersion}
+              isDigitalDia={receipt.isDigitalDia}
             />
           </div>
         </div>
@@ -807,14 +891,28 @@ export function ReviewWorkstation({
             </div>
 
             {status !== "CONFIRMED" && (
-              <button
-                type="button"
-                onClick={addManualLine}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 hover:bg-zinc-800 hover:border-emerald-500/50 text-zinc-200 text-xs font-semibold transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Add Line Item</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {pendingItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleEnrichWithAI}
+                    disabled={isEnrichingAI || isPending}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold whitespace-nowrap shrink-0 disabled:opacity-50 transition-colors"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${isEnrichingAI ? "animate-spin" : ""}`} />
+                    <span>{isEnrichingAI ? "Resolving..." : "AI Resolve Names"}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={addManualLine}
+                  disabled={isEnrichingAI || isPending}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 hover:bg-zinc-800 hover:border-emerald-500/50 text-zinc-200 text-xs font-semibold whitespace-nowrap shrink-0 disabled:opacity-50 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Add Line Item</span>
+                </button>
+              </div>
             )}
           </div>
 

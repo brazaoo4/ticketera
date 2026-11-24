@@ -3,8 +3,16 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
   SPANISH_TO_ENGLISH_CATEGORIES,
-  inferUnitAndMeasureHeuristics,
 } from "@/lib/queue/receipt-worker";
+import { inferUnitAndMeasureHeuristics } from "@/lib/queue/receipt-worker";
+import {
+  hasConfiguredAiProvider,
+  normalizeCanonicalCategory,
+  resolvePosItemsWithAI,
+  type RawPosItemInput,
+  type ResolvedPosItem,
+} from "@/lib/ai/resolve-items";
+import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
 import { renderDiaTicketToWebp } from "./render-ticket";
 import { DiaTicketDetailResponse, DiaTicketSummary } from "./types";
 
@@ -15,6 +23,13 @@ export interface ImportDiaTicketResult {
   itemCount: number;
   isDuplicate: boolean;
   status: "IMPORTED" | "SKIPPED_DUPLICATE";
+}
+
+export interface MatchedCatalogProduct {
+  id: string;
+  baseUnit: "KG" | "L" | "UNIT";
+  category: string;
+  displayName: string;
 }
 
 function toTitleCase(str: string): string {
@@ -62,6 +77,14 @@ export function inferSpanishGroceryCategory(
   }
 
   if (
+    /\b(AGUA|REFRESCO|REFR\b|COLA|COCA[\s-]?COLA|FANTA|AQUARIUS|NESTEA|FUZE\s*TEA|ICE\s*TEA|T[EÉ]\s+(?:AL\s+|FR[IÍ]O|LIM[OÓ]N|MELOCOT[OÓ]N|MANGO|MARACUY[AÁ])|RED\s*BULL|MONSTER|ENERG[EÉ]TICA|ZUMO|N[EÉ]CTAR|CERVEZAS?|CERV\b|RADLER|TINTO|VINO|CAVA|SIDRA|GINEBRA|RON|WHISKY|LICOR|BATIDO|HORCHATA)\b/i.test(
+      rawName
+    )
+  ) {
+    return "Beverages";
+  }
+
+  if (
     /\b(ENSALAD[A]?|LECHUGA|TOMATE|PIMIENTO|CEBOLLA|AJO|PATATA|ZANAHORIA|CALABAC[IÍ]N|BERENJENA|PEPINO|BR[OÓ]COLI|COLIFLOR|ESPINACA|ACELGA|CHAMPI[ÑN][OÓ]N|SETA|AGUACATE|PL[AÁ]TANO|BANANA|MANZANA|PERA|NARANJA|MANDARINA|LIM[OÓ]N|FRESA|AR[AÁ]NDANO|FRAMBUESA|UVA|MEL[OÓ]N|SAND[IÍ]A|PI[ÑN]A|KIWI|MANGO|MELOCOT[OÓ]N|NECTARINA|CIRUELA|CEREZA)\b/i.test(
       rawName
     )
@@ -70,7 +93,7 @@ export function inferSpanishGroceryCategory(
   }
 
   if (
-    /\b(LECHE|YOGUR|KEFIR|QUESO|MOZZARELLA|GOUDA|CHEDDAR|EMMENTAL|MANCHEGO|PARMESANO|BURRATA|NATA|MANTEQUILLA|MARGARINA|HUEVO|DOCENA|CUAJADA|FLAN|NATILLAS)\b/i.test(
+    /\b(LECHE|YOGUR|KEFIR|QUESO|QUESITO|PORCIONES\s+NATU|MOZZARELLA|GOUDA|CHEDDAR|EMMENTAL|MANCHEGO|PARMESANO|BURRATA|NATA|MANTEQUILLA|MARGARINA|HUEVO|DOCENA|CUAJADA|FLAN|NATILLAS)\b/i.test(
       rawName
     )
   ) {
@@ -86,22 +109,14 @@ export function inferSpanishGroceryCategory(
   }
 
   if (
-    /\b(AGUA|REFRESCO|REFR\b|COLA|COCA[\s-]?COLA|FANTA|AQUARIUS|NESTEA|RED\s*BULL|MONSTER|ENERG[EÉ]TICA|ZUMO|N[EÉ]CTAR|CERVEZAS?|CERV\b|RADLER|TINTO|VINO|CAVA|SIDRA|GINEBRA|RON|WHISKY|LICOR|BATIDO|HORCHATA)\b/i.test(
-      rawName
-    )
-  ) {
-    return "Beverages";
-  }
-
-  if (
-    /\b(ACEITE|OLIVA|GIRASOL|VINAGRE|SALSAS?|MAYONESA|KETCHUP|MOSTAZA|ALIOLI|SOJA|TOMATE\s+FRITO|ESPECIAS?|PIMIENTA|OR[EÉ]GANO|PIMENT[OÓ]N|SAL\b|CANELA)\b/i.test(
+    /\b(ACEITE|OLIVA|GIRASOL|VINAGRE|SALSAS?|MAYONESA|KETCHUP|MOSTAZA|ALIOLI|SOJA|TOMATE\s+FRITO|ESPECIAS?|PIMIENTA|OR[EÉ]GANO|PIMENT[OÓ]N|CANELA)\b|^SAL\b/i.test(
       rawName
     )
   ) {
     return "Oils & Condiments";
   }
 
-  if (/\b(CONGELAD[OA]S?|HELADOS?|HIELO)\b/i.test(rawName)) {
+  if (/\b(CONGELAD[OA]S?|HELADOS?|HIELO|MENESTRA)\b/i.test(rawName)) {
     return "Frozen Foods";
   }
 
@@ -114,7 +129,7 @@ export function inferSpanishGroceryCategory(
   }
 
   if (
-    /\b(CHAMP[UÚ]|GEL\s+BA[ÑN]O|GEL\s+DUCHA|DESODORANTE|PASTA\s+DENTAL|DENT[IÍ]FRICO|COLUTORIO|CEPILLO\s+DENTAL|CREMA|JAB[OÓ]N\s+MANOS|COMPRESAS?|TAMP[OÓ]N|MAQUINILLAS?|AFEITAR|TOALLITAS?)\b/i.test(
+    /\b(CHAMP[UÚ]|GEL\s+BA[ÑN]O|GEL\s+DUCHA|DESODORANTE|PASTA\s+DENTAL|DENT[IÍ]FRICO|CREM(?:A)?\s+DENT|COLUTORIO|CEPILLO\s+DENTAL|CREMA|JAB[OÓ]N\s+MANOS|COMPRESAS?|TAMP[OÓ]N|MAQUINILLAS?|AFEITAR|TOALLITAS?)\b/i.test(
       rawName
     )
   ) {
@@ -122,7 +137,7 @@ export function inferSpanishGroceryCategory(
   }
 
   if (
-    /\b(PASTAS?|MACARR[OÓ]N|MACARRONES|ESPAGUETIS?|H[EÉ]LICES?|TALLAR[IÍ]N|TALLARINES|FIDEOS?|ARROZ|LENTEJAS?|GARBANZOS?|ALUBIAS?|HARINA|AZ[UÚ]CAR|CAF[EÉ]|C[AÁ]PSULAS?|INFUSI[OÓ]N|T[EÉ]\b|CACAO|CHOCOLATES?|GOMINOLAS?|CARAMELOS?|GOLOSINAS?|PATATAS?\s+FRITAS?|SNACKS?|FRUTOS?\s+SECOS?|ALMENDRAS?|NUEZ|NUECES|PISTACHOS?|ANACARDOS?|CACAHUETES?|ACEITUNAS?|ENCURTIDOS?|PEPINILLOS?|CONSERVAS?|CALDOS?|SOPAS?|PIZZAS?|LASA[ÑN]AS?)\b/i.test(
+    /\b(PASTAS?|MACARR[OÓ]N|MACARRONES|ESPAGUETIS?|H[EÉ]LICES?|TALLAR[IÍ]N|TALLARINES|FIDEOS?|ARROZ|LENTEJAS?|GARBANZOS?|ALUBIAS?|HARINA|AZ[UÚ]CAR|CAF[EÉ]|C[AÁ]PSULAS?|INFUSI[OÓ]N|MANZANILLA|TILA|POLEO|T[EÉ]\b|CACAO|CHOCOLATES?|MUESLI|BARRITA|CEREAL(?:ES)?|AVENA|GOMINOLAS?|CARAMELOS?|GOLOSINAS?|PATATAS?\s+FRITAS?|SNACKS?|FRUTOS?\s+SECOS?|ALMENDRAS?|NUEZ|NUECES|PISTACHOS?|ANACARDOS?|CACAHUETES?|ACEITUNAS?|ENCURTIDOS?|PEPINILLOS?|CONSERVAS?|CALDOS?|SOPAS?|PIZZAS?|LASA[ÑN]AS?)\b/i.test(
       rawName
     )
   ) {
@@ -133,18 +148,146 @@ export function inferSpanishGroceryCategory(
 }
 
 /**
- * Deterministically imports a Dia POS ticket into Ticketera without using AI tokens.
- * Maps line items, weighed items, discounts, and taxes with high fidelity.
+ * Matches a candidate product name against the canonical Product table using
+ * exact displayName match, pg_trgm similarity, and safe substring fallback.
+ */
+export async function matchProductInCatalog(
+  candidateName: string
+): Promise<{ product: MatchedCatalogProduct; matchConfidence: number } | null> {
+  const cleanName = candidateName.trim();
+  if (!cleanName) return null;
+
+  const exactProd = await prisma.product.findFirst({
+    where: {
+      displayName: { equals: cleanName, mode: "insensitive" },
+    },
+    select: { id: true, baseUnit: true, category: true, displayName: true },
+  });
+
+  if (exactProd) {
+    return {
+      product: exactProd as MatchedCatalogProduct,
+      matchConfidence: 1.0,
+    };
+  }
+
+  try {
+    const fuzzyMatches = await prisma.$queryRaw<Array<{ id: string; sim: number }>>`
+      SELECT id, similarity("displayName", ${cleanName})::float AS sim
+      FROM "Product"
+      WHERE similarity("displayName", ${cleanName}) >= 0.35
+      ORDER BY sim DESC
+      LIMIT 1
+    `;
+
+    if (fuzzyMatches.length > 0 && fuzzyMatches[0].sim >= 0.35) {
+      const matched = await prisma.product.findUnique({
+        where: { id: fuzzyMatches[0].id },
+        select: { id: true, baseUnit: true, category: true, displayName: true },
+      });
+      if (matched) {
+        return {
+          product: matched as MatchedCatalogProduct,
+          matchConfidence: Number(Math.min(0.95, fuzzyMatches[0].sim).toFixed(2)),
+        };
+      }
+    }
+  } catch {
+    if (cleanName.length >= 4) {
+      const fallbackProd = await prisma.product.findFirst({
+        where: {
+          displayName: { contains: cleanName, mode: "insensitive" },
+        },
+        select: { id: true, baseUnit: true, category: true, displayName: true },
+      });
+      if (fallbackProd) {
+        return {
+          product: fallbackProd as MatchedCatalogProduct,
+          matchConfidence: 0.7,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolves effective baseUnit, total line unitMeasure, and pricePerBaseUnit
+ * for non-variable-weight items using catalog locks, AI hints, and heuristics.
+ */
+export function computePackUnitAndPrice({
+  rawName,
+  discountHints = [],
+  suggestedName,
+  category,
+  matchedProductBaseUnit,
+  aiBaseUnit,
+  aiUnitMeasurePerPack,
+  unitPrice,
+  totalPrice,
+  quantity,
+}: {
+  rawName: string;
+  discountHints?: string[];
+  suggestedName: string;
+  category: string;
+  matchedProductBaseUnit?: "KG" | "L" | "UNIT";
+  aiBaseUnit?: "KG" | "L" | "UNIT";
+  aiUnitMeasurePerPack?: number;
+  unitPrice: number;
+  totalPrice: number;
+  quantity: number;
+}): {
+  baseUnit: "KG" | "L" | "UNIT";
+  unitMeasure: number;
+  pricePerBaseUnit: number;
+} {
+  const inferred = inferUnitAndMeasureHeuristics({
+    rawName: [rawName, ...discountHints].join(" "),
+    suggestedName,
+    category,
+    aiBaseUnit: matchedProductBaseUnit || aiBaseUnit,
+    aiUnitMeasure: aiUnitMeasurePerPack,
+    aiUnitPrice: unitPrice,
+    totalPrice,
+    quantity,
+  });
+
+  const baseUnit = matchedProductBaseUnit || inferred.baseUnit;
+  const perPackMeasure = inferred.baseUnit === baseUnit ? inferred.unitMeasure : 1;
+  const qty = quantity > 0 ? quantity : 1;
+  const unitMeasure = Number(
+    (qty * (perPackMeasure > 0 ? perPackMeasure : 1)).toFixed(3)
+  );
+  let pricePerBaseUnit =
+    unitMeasure > 0 && totalPrice > 0
+      ? Number((totalPrice / unitMeasure).toFixed(2))
+      : 0;
+  if (isNaN(pricePerBaseUnit) || !isFinite(pricePerBaseUnit) || pricePerBaseUnit < 0) {
+    pricePerBaseUnit = 0;
+  }
+
+  return { baseUnit, unitMeasure, pricePerBaseUnit };
+}
+
+/**
+ * Imports a Dia POS ticket into Ticketera using deterministic POS amounts/weights,
+ * trained ProductAlias memory, and catalog-aware AI item name/category resolution
+ * for unfamiliar items (with deterministic fallback when AI is unavailable).
  */
 export async function importDiaTicket({
   userId,
   summary,
   detail,
+  useAI = true,
 }: {
   userId: string;
   summary: DiaTicketSummary;
   detail: DiaTicketDetailResponse;
+  useAI?: boolean;
 }): Promise<ImportDiaTicketResult> {
+  const startTime = Date.now();
   const externalTicketId = summary.ticket_unique_code;
   const fileHash = crypto
     .createHash("sha256")
@@ -154,10 +297,7 @@ export async function importDiaTicket({
   // 1. Deduplication Check
   const existingReceipt = await prisma.receipt.findFirst({
     where: {
-      OR: [
-        { externalTicketId },
-        { fileHash },
-      ],
+      OR: [{ externalTicketId }, { fileHash }],
     },
     select: { id: true, totalAmount: true },
   });
@@ -213,33 +353,42 @@ export async function importDiaTicket({
     // 4. Generate SVG & WebP thermal receipt companion for review viewer
     await renderDiaTicketToWebp(receipt.id, summary, detail);
 
-    // 5. Match items and format items for insertion
-    const itemsToCreate: Prisma.ReceiptItemCreateManyInput[] = [];
-    const corporateItems = detail.corporate?.items || [];
-    let itemDiscountsSum = 0;
+    // 5. Pass 1: Deterministic exact ProductAlias lookup + queue unfamiliar items for AI
+    const activeCorporateItems = (detail.corporate?.items || []).filter((i) => !i.cancel);
+    const unmatchedForAi: RawPosItemInput[] = [];
 
-    for (const item of corporateItems) {
-      if (item.cancel) continue;
+    type MatchedAliasRecord = {
+      id: string;
+      productId: string;
+      unitMeasurePerPack: Prisma.Decimal | number | null;
+      isVariableWeight: boolean;
+      product: MatchedCatalogProduct;
+    };
 
+    const pass1Entries: Array<{
+      item: (typeof activeCorporateItems)[number];
+      rawName: string;
+      isBagOrFee: boolean;
+      discountDescs: string[];
+      productId: string | null;
+      matchConfidence: number;
+      matchedAlias: MatchedAliasRecord | null;
+      matchedProduct: MatchedCatalogProduct | null;
+    }> = [];
+
+    for (let idx = 0; idx < activeCorporateItems.length; idx++) {
+      const item = activeCorporateItems[idx];
       const rawName = item.name.trim().toUpperCase();
       const isBagOrFee = BAG_OR_FEE_REGEX.test(rawName);
+      const discountDescs = Array.isArray(item.discounts)
+        ? item.discounts.map((d) => d.description || "").filter(Boolean)
+        : [];
+
       let productId: string | null = null;
       let matchConfidence = 0;
-      let matchedAlias: {
-        id: string;
-        productId: string;
-        unitMeasurePerPack: Prisma.Decimal | number | null;
-        isVariableWeight: boolean;
-        product: { id: string; baseUnit: string; category: string; displayName?: string };
-      } | null = null;
-      let matchedProduct: {
-        id: string;
-        baseUnit: "KG" | "L" | "UNIT";
-        category: string;
-        displayName: string;
-      } | null = null;
+      let matchedAlias: MatchedAliasRecord | null = null;
+      let matchedProduct: MatchedCatalogProduct | null = null;
 
-      // Check 1: Deterministic exact alias match for DIA store
       if (!isBagOrFee) {
         try {
           const alias = await prisma.productAlias.findUnique({
@@ -257,84 +406,121 @@ export async function importDiaTicket({
           });
 
           if (alias) {
-            matchedAlias = alias;
+            matchedAlias = alias as MatchedAliasRecord;
             productId = alias.productId;
             matchConfidence = 1.0;
-            matchedProduct = alias.product as {
-              id: string;
-              baseUnit: "KG" | "L" | "UNIT";
-              category: string;
-              displayName: string;
-            };
+            matchedProduct = alias.product as MatchedCatalogProduct;
           }
         } catch (aliasErr) {
           console.warn(`[DiaImporter] Exact alias lookup error for "${rawName}":`, aliasErr);
         }
       }
 
-      // Check 2: Exact displayName match
-      if (!productId && !isBagOrFee) {
+      if (!matchedAlias && !isBagOrFee) {
+        const isVarWeight = Boolean(item.variable_weight && item.weight && item.weight > 0);
+        unmatchedForAi.push({
+          index: idx,
+          rawName,
+          quantity: isVarWeight ? 1 : Number(item.quantity || 1),
+          unitPrice: Number(item.price_per_unit || item.amount || 0),
+          totalPrice: Number(item.amount || 0),
+          isVariableWeight: isVarWeight,
+          weight: Number(item.weight || 0),
+          discountHints: discountDescs,
+        });
+      }
+
+      pass1Entries.push({
+        item,
+        rawName,
+        isBagOrFee,
+        discountDescs,
+        productId,
+        matchConfidence,
+        matchedAlias,
+        matchedProduct,
+      });
+    }
+
+    // 5b. Pass 2: Catalog-aware AI item resolution for unfamiliar items
+    let aiByIndex = new Map<number, ResolvedPosItem>();
+    let aiUsedProvider: string | null = null;
+
+    if (useAI !== false && unmatchedForAi.length > 0 && hasConfiguredAiProvider()) {
+      try {
+        const catalogProducts = await prisma.product.findMany({
+          select: { displayName: true, category: true, baseUnit: true },
+          orderBy: { displayName: "asc" },
+          take: 400,
+        });
+
+        const aiRes = await resolvePosItemsWithAI({
+          storeName: "DIA",
+          items: unmatchedForAi,
+          catalogProducts: catalogProducts.map((p) => ({
+            displayName: p.displayName,
+            category: p.category,
+            baseUnit: p.baseUnit as "KG" | "L" | "UNIT",
+          })),
+        });
+
+        aiByIndex = new Map(aiRes.items.map((x) => [x.index, x]));
+        if (aiRes.aiProvider && aiRes.aiProvider !== "none") {
+          aiUsedProvider = aiRes.aiProvider;
+        }
+      } catch (aiErr) {
+        console.warn(
+          `[DiaImporter] AI resolution failed for ${externalTicketId}, falling back to deterministic heuristics:`,
+          aiErr instanceof Error ? aiErr.message : aiErr
+        );
+      }
+    }
+
+    // 5c. Pass 3: Match catalog products, apply units/measures, and build ReceiptItems
+    const itemsToCreate: Prisma.ReceiptItemCreateManyInput[] = [];
+    let itemDiscountsSum = 0;
+
+    for (let idx = 0; idx < pass1Entries.length; idx++) {
+      const entry = pass1Entries[idx];
+      const { item, rawName, discountDescs, matchedAlias } = entry;
+      let { productId, matchConfidence, matchedProduct } = entry;
+
+      const aiItem = !matchedAlias ? aiByIndex.get(idx) : undefined;
+      const effectiveIsBag = entry.isBagOrFee || Boolean(aiItem?.is_bag_or_fee);
+      const candidateName = (aiItem?.suggested_name || item.name).trim();
+
+      if (!productId && !effectiveIsBag) {
         try {
-          const exactProd = await prisma.product.findFirst({
-            where: {
-              displayName: { equals: item.name.trim(), mode: "insensitive" },
-            },
-            select: { id: true, baseUnit: true, category: true, displayName: true },
-          });
-          if (exactProd) {
-            productId = exactProd.id;
-            matchConfidence = 1.0;
-            matchedProduct = exactProd as {
-              id: string;
-              baseUnit: "KG" | "L" | "UNIT";
-              category: string;
-              displayName: string;
-            };
+          const catalogMatch = await matchProductInCatalog(candidateName);
+          if (catalogMatch) {
+            productId = catalogMatch.product.id;
+            matchConfidence = catalogMatch.matchConfidence;
+            matchedProduct = catalogMatch.product;
           }
-        } catch (exactErr) {
-          console.warn(`[DiaImporter] Exact product lookup error for "${item.name}":`, exactErr);
+        } catch (matchErr) {
+          console.warn(`[DiaImporter] Catalog lookup error for "${candidateName}":`, matchErr);
         }
       }
 
-      // Check 3: pg_trgm similarity search
-      if (!productId && !isBagOrFee) {
-        try {
-          const cleanName = item.name.trim();
-          const fuzzyMatches = await prisma.$queryRaw<Array<{ id: string; sim: number }>>`
-            SELECT id, similarity("displayName", ${cleanName})::float AS sim
-            FROM "Product"
-            WHERE similarity("displayName", ${cleanName}) >= 0.35
-            ORDER BY sim DESC
-            LIMIT 1
-          `;
-
-          if (fuzzyMatches.length > 0 && fuzzyMatches[0].sim >= 0.35) {
-            productId = fuzzyMatches[0].id;
-            matchConfidence = Number(fuzzyMatches[0].sim.toFixed(2));
-            matchedProduct = (await prisma.product.findUnique({
-              where: { id: productId },
-              select: { id: true, baseUnit: true, category: true, displayName: true },
-            })) as {
-              id: string;
-              baseUnit: "KG" | "L" | "UNIT";
-              category: string;
-              displayName: string;
-            } | null;
-          }
-        } catch (fuzzyErr) {
-          console.warn(`[DiaImporter] pg_trgm similarity search error for "${item.name}":`, fuzzyErr);
-        }
-      }
-
-      const discountDescs = Array.isArray(item.discounts)
-        ? item.discounts.map((d) => d.description || "")
-        : [];
+      const aiCat = aiItem?.category ? normalizeCanonicalCategory(aiItem.category) : null;
+      const heuristicCat = inferSpanishGroceryCategory(rawName, discountDescs);
       const rawCategory =
-        matchedProduct?.category || inferSpanishGroceryCategory(rawName, discountDescs);
-      const normalizedCategory =
-        SPANISH_TO_ENGLISH_CATEGORIES[rawCategory] || rawCategory;
+        matchedProduct?.category ||
+        (aiCat && (aiCat !== "Other" || heuristicCat === "Other") ? aiCat : heuristicCat);
+      const mappedCat = SPANISH_TO_ENGLISH_CATEGORIES[rawCategory] || rawCategory;
+      const normalizedCategory = CANONICAL_CATEGORIES.includes(
+        mappedCat as (typeof CANONICAL_CATEGORIES)[number]
+      )
+        ? mappedCat
+        : normalizeCanonicalCategory(mappedCat);
 
       const isVariableWeight = Boolean(item.variable_weight && item.weight && item.weight > 0);
+      const quantity = isVariableWeight ? 1 : Number(item.quantity || 1);
+      const unitPrice = isVariableWeight
+        ? Number(item.price_per_unit)
+        : Number(item.price_per_unit || item.amount);
+      const totalPrice = Number(item.amount);
+
       let baseUnit: "KG" | "L" | "UNIT" = isVariableWeight
         ? "KG"
         : (matchedProduct?.baseUnit as "KG" | "L" | "UNIT") || "UNIT";
@@ -342,48 +528,49 @@ export async function importDiaTicket({
       let pricePerBase = isVariableWeight
         ? Number(item.price_per_unit)
         : Number(item.amount);
-      const quantity = isVariableWeight ? 1 : Number(item.quantity || 1);
-      const unitPrice = isVariableWeight
-        ? Number(item.price_per_unit)
-        : Number(item.price_per_unit || item.amount);
-      const totalPrice = Number(item.amount);
 
       if (!isVariableWeight) {
-        const inferred = inferUnitAndMeasureHeuristics({
-          rawName,
-          suggestedName: matchedProduct?.displayName || rawName,
-          category: normalizedCategory,
-          aiBaseUnit: matchedProduct?.baseUnit as "KG" | "L" | "UNIT",
-          aiUnitMeasure: undefined,
-          aiUnitPrice: unitPrice,
-          totalPrice,
-          quantity,
-        });
-
-        baseUnit = (matchedProduct?.baseUnit as "KG" | "L" | "UNIT") || inferred.baseUnit;
-        unitMeasure = inferred.unitMeasure;
-        pricePerBase = inferred.pricePerBaseUnit;
-
-        // Auto pack-size from product alias if available
         if (
           matchedAlias &&
           matchedAlias.unitMeasurePerPack !== null &&
           !matchedAlias.isVariableWeight
         ) {
+          baseUnit = (matchedProduct?.baseUnit as "KG" | "L" | "UNIT") || "UNIT";
           const packMeasure = Number(matchedAlias.unitMeasurePerPack);
-          const qty = Number(quantity) || 1;
+          const qty = quantity > 0 ? quantity : 1;
           unitMeasure = Number((qty * packMeasure).toFixed(3));
           pricePerBase =
             unitMeasure > 0 && totalPrice > 0
               ? Number((totalPrice / unitMeasure).toFixed(2))
               : 0;
-          if (isNaN(pricePerBase) || !isFinite(pricePerBase) || pricePerBase < 0) {
-            pricePerBase = 0;
-          }
+        } else {
+          const resolved = computePackUnitAndPrice({
+            rawName,
+            discountHints: discountDescs,
+            suggestedName: matchedProduct?.displayName || candidateName,
+            category: normalizedCategory,
+            matchedProductBaseUnit: matchedProduct?.baseUnit as "KG" | "L" | "UNIT" | undefined,
+            aiBaseUnit: aiItem?.base_unit,
+            aiUnitMeasurePerPack: aiItem?.unit_measure_per_pack,
+            unitPrice,
+            totalPrice,
+            quantity,
+          });
+
+          baseUnit = resolved.baseUnit;
+          unitMeasure = resolved.unitMeasure;
+          pricePerBase = resolved.pricePerBaseUnit;
+        }
+
+        if (isNaN(pricePerBase) || !isFinite(pricePerBase) || pricePerBase < 0) {
+          pricePerBase = 0;
         }
       }
 
-      const suggestedName = matchedProduct?.displayName || toTitleCase(item.name);
+      const suggestedName =
+        matchedProduct?.displayName ||
+        aiItem?.suggested_name?.trim() ||
+        toTitleCase(item.name);
 
       itemsToCreate.push({
         receiptId: receipt.id,
@@ -399,7 +586,7 @@ export async function importDiaTicket({
         unitMeasure: new Prisma.Decimal(unitMeasure),
         pricePerBaseUnit: new Prisma.Decimal(pricePerBase),
         isDiscount: false,
-        excluded: isBagOrFee,
+        excluded: effectiveIsBag,
         confirmed: false,
       });
 
@@ -430,7 +617,7 @@ export async function importDiaTicket({
       }
     }
 
-    // 5b. Reconcile basket-level discounts or employee discounts not attached to individual items
+    // 5d. Reconcile basket-level discounts or employee discounts not attached to individual items
     const reportedTotalDiscounts = -Math.abs(Number(detail.amount?.total_discounts || 0));
     const unaccountedDiscount = Number(
       (reportedTotalDiscounts - itemDiscountsSum).toFixed(2)
@@ -455,7 +642,7 @@ export async function importDiaTicket({
       });
     }
 
-    // 5c. Online shipping fee if applicable
+    // 5e. Online shipping fee if applicable
     const shippingAmount = Number(detail.amount?.shipping_amount || 0);
     if (shippingAmount >= 0.01) {
       itemsToCreate.push({
@@ -490,6 +677,9 @@ export async function importDiaTicket({
         })) as unknown as Prisma.InputJsonValue;
     }
 
+    const processingMs = Math.max(0, Date.now() - startTime);
+    const aiProviderLabel = aiUsedProvider ? `dia-pos+${aiUsedProvider}` : "dia-pos";
+
     // 7. Atomic update receipt + items
     await prisma.$transaction(async (tx) => {
       if (itemsToCreate.length > 0) {
@@ -501,6 +691,8 @@ export async function importDiaTicket({
         data: {
           sourceFile: `${receipt.id}.webp`,
           status: "REVIEW",
+          aiProvider: aiProviderLabel,
+          processingMs,
           errorMessage: null,
           taxBreakdown: taxBreakdownValue !== undefined ? taxBreakdownValue : Prisma.DbNull,
         },
@@ -508,7 +700,7 @@ export async function importDiaTicket({
     });
 
     console.log(
-      `[DiaImporter] ✓ Successfully imported Dia ticket ${externalTicketId} (${receipt.id}) with ${itemsToCreate.length} items.`
+      `[DiaImporter] ✓ Successfully imported Dia ticket ${externalTicketId} (${receipt.id}) with ${itemsToCreate.length} items via ${aiProviderLabel} in ${processingMs}ms.`
     );
 
     return {

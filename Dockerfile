@@ -27,13 +27,15 @@ RUN --mount=type=cache,target=/app/.next/cache \
 
 # Stage 3: Runner
 FROM node:22-alpine AS runner
-RUN apk add --no-cache libc6-compat openssl
+RUN apk add --no-cache libc6-compat openssl fontconfig font-dejavu && \
+    fc-cache -f
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV FONTCONFIG_PATH=/etc/fonts
 
 # Prepare upload and cache directories for user 1000 (node)
 RUN mkdir -p /app/uploads /app/.next/cache && \

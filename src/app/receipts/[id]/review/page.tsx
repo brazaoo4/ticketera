@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { ensureFreshDiaTicketWebp } from "@/lib/integrations/dia/render-ticket";
 import { ReviewWorkstation, SerializedReceipt, SerializedStore } from "./review-workstation";
 
 export const dynamic = "force-dynamic";
@@ -141,6 +142,8 @@ export default async function ReceiptReviewPage({
   const nextPendingId = pendingReviewReceipts[0]?.id || null;
   const pendingReviewCount = pendingReviewReceipts.length;
 
+  await ensureFreshDiaTicketWebp(receipt.id).catch(() => false);
+
   const uploadDir =
     process.env.UPLOAD_DIR ||
     (process.env.NODE_ENV === "production"
@@ -149,6 +152,11 @@ export default async function ReceiptReviewPage({
   const hasOriginalPdf =
     receipt.sourceFile.toLowerCase().endsWith(".pdf") ||
     fs.existsSync(path.join(uploadDir, `${receipt.id}.pdf`));
+  const isDigitalDia = fs.existsSync(path.join(uploadDir, `${receipt.id}.json`));
+  const webpPath = path.join(uploadDir, `${receipt.id}.webp`);
+  const fileVersion = fs.existsSync(webpPath)
+    ? String(Math.trunc(fs.statSync(webpPath).mtimeMs))
+    : undefined;
 
   // Serialize Decimal objects to plain numbers for client component props
   const serializedReceipt: SerializedReceipt = {
@@ -161,6 +169,8 @@ export default async function ReceiptReviewPage({
     processingMs: receipt.processingMs,
     sourceFile: receipt.sourceFile,
     hasOriginalPdf,
+    fileVersion,
+    isDigitalDia,
     taxBreakdown: Array.isArray(receipt.taxBreakdown)
       ? (receipt.taxBreakdown as Array<{ rate: number; baseAmount: number; taxAmount: number }>).map((t) => ({
           rate: Number(t.rate) || 0,

@@ -1,7 +1,7 @@
 import { ParsedReceipt, ParsedReceiptSchema } from "../schema";
 import { RECEIPT_PARSE_SYSTEM_PROMPT } from "../prompt";
 
-const DEFAULT_OPENAI_MODELS = [
+export const DEFAULT_OPENAI_MODELS = [
   "gpt-4o-mini",
   "gpt-4o",
 ];

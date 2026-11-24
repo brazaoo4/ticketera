@@ -6,7 +6,18 @@ import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import fs from "fs";
 import path from "path";
-import { compressReceiptImage } from "@/lib/receipts/preprocess";
+import { compressReceiptImage, UPLOAD_DIR } from "@/lib/receipts/preprocess";
+import {
+  hasConfiguredAiProvider,
+  normalizeCanonicalCategory,
+  resolvePosItemsWithAI,
+  type RawPosItemInput,
+} from "@/lib/ai/resolve-items";
+import {
+  computePackUnitAndPrice,
+  matchProductInCatalog,
+} from "@/lib/integrations/dia/importer";
+import type { DiaTicketDetailResponse } from "@/lib/integrations/dia/types";
 
 export interface ReviewItemInput {
   id?: string;
@@ -285,6 +296,315 @@ export async function confirmReceiptAction(input: ConfirmReceiptInput) {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to confirm receipt.",
+    };
+  }
+}
+
+export interface EnrichedItemPatch {
+  id: string;
+  suggestedName: string;
+  suggestedCat: string | null;
+  matchConfidence: number;
+  productId: string | null;
+  baseUnit: "KG" | "L" | "UNIT";
+  unitMeasure: number;
+  pricePerBaseUnit: number;
+  excluded: boolean;
+  product?: {
+    id: string;
+    displayName: string;
+    category: string;
+    baseUnit: "KG" | "L" | "UNIT";
+    isStaple: boolean;
+  } | null;
+}
+
+async function loadDiaJsonItemHints(
+  receiptId: string
+): Promise<
+  Map<string, Array<{ discountHints: string[]; isVariableWeight: boolean; weight: number }>>
+> {
+  const hintsByRawName = new Map<
+    string,
+    Array<{ discountHints: string[]; isVariableWeight: boolean; weight: number }>
+  >();
+  const diaJsonPath = path.join(UPLOAD_DIR, `${receiptId}.json`);
+  if (!fs.existsSync(diaJsonPath)) return hintsByRawName;
+
+  try {
+    const parsedJson = JSON.parse(await fs.promises.readFile(diaJsonPath, "utf8")) as {
+      detail?: DiaTicketDetailResponse;
+    };
+    for (const dItem of parsedJson.detail?.corporate?.items || []) {
+      if (dItem.cancel) continue;
+      const key = dItem.name.trim().toUpperCase();
+      const list = hintsByRawName.get(key) || [];
+      list.push({
+        discountHints: Array.isArray(dItem.discounts)
+          ? dItem.discounts.map((d) => d.description || "").filter(Boolean)
+          : [],
+        isVariableWeight: Boolean(dItem.variable_weight && dItem.weight && dItem.weight > 0),
+        weight: Number(dItem.weight || 0),
+      });
+      hintsByRawName.set(key, list);
+    }
+  } catch (jsonErr) {
+    console.warn(`[EnrichAI] Could not parse DIA JSON hints for ${receiptId}:`, jsonErr);
+  }
+
+  return hintsByRawName;
+}
+
+export async function enrichReceiptItemsWithAIAction(receiptId: string): Promise<{
+  success: boolean;
+  error?: string;
+  message?: string;
+  enrichedCount?: number;
+  aiProvider?: string;
+  nextReceiptAiProvider?: string | null;
+  updatedItems?: EnrichedItemPatch[];
+}> {
+  let user;
+  try {
+    user = await requireAuthUser();
+  } catch {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  if (!hasConfiguredAiProvider()) {
+    return {
+      success: false,
+      error: "No AI provider API key is configured.",
+    };
+  }
+
+  try {
+    const receipt = await prisma.receipt.findUnique({
+      where: { id: receiptId },
+      include: {
+        store: true,
+        items: {
+          orderBy: [{ excluded: "asc" }, { matchConfidence: "asc" }, { rawName: "asc" }],
+        },
+      },
+    });
+
+    if (!receipt) {
+      return { success: false, error: "Receipt not found." };
+    }
+
+    if (user.role !== "ADMIN" && receipt.userId !== user.id) {
+      return {
+        success: false,
+        error: "You do not have permission to edit this receipt.",
+      };
+    }
+
+    if (receipt.status !== "REVIEW") {
+      return {
+        success: false,
+        error: "Only receipts in REVIEW status can be enriched with AI.",
+      };
+    }
+
+    const targetItems = receipt.items.filter(
+      (i) => !i.excluded && !i.isDiscount && Number(i.matchConfidence) < 1.0
+    );
+
+    if (targetItems.length === 0) {
+      return {
+        success: true,
+        enrichedCount: 0,
+        message: "All active items are already matched.",
+        updatedItems: [],
+      };
+    }
+
+    const diaHintsByRawName = await loadDiaJsonItemHints(receiptId);
+
+    const hintConsumption = new Map<string, number>();
+    const targetInputs: RawPosItemInput[] = targetItems.map((item, idx) => {
+      const key = item.rawName.trim().toUpperCase();
+      const hintList = diaHintsByRawName.get(key) || [];
+      const seenCount = hintConsumption.get(key) || 0;
+      hintConsumption.set(key, seenCount + 1);
+      const hint = hintList[seenCount] || hintList[0];
+
+      const qty = Number(item.quantity) || 1;
+      const measure = Number(item.unitMeasure) || 1;
+      const inferredVarWeight = Boolean(
+        item.baseUnit === "KG" &&
+          qty === 1 &&
+          measure > 0 &&
+          Math.abs(measure * 20 - Math.round(measure * 20)) > 0.005
+      );
+
+      return {
+        index: idx,
+        rawName: item.rawName,
+        quantity: qty,
+        unitPrice: Number(item.unitPrice) || 0,
+        totalPrice: Number(item.totalPrice) || 0,
+        isVariableWeight: hint ? hint.isVariableWeight : inferredVarWeight,
+        weight: hint ? hint.weight : inferredVarWeight ? measure : 0,
+        discountHints: hint ? hint.discountHints : [],
+      };
+    });
+
+    const catalogProducts = await prisma.product.findMany({
+      select: { displayName: true, category: true, baseUnit: true },
+      orderBy: { displayName: "asc" },
+      take: 400,
+    });
+
+    const aiRes = await resolvePosItemsWithAI({
+      storeName: receipt.store.name,
+      items: targetInputs,
+      catalogProducts: catalogProducts.map((p) => ({
+        displayName: p.displayName,
+        category: p.category,
+        baseUnit: p.baseUnit as "KG" | "L" | "UNIT",
+      })),
+    });
+
+    const aiByIndex = new Map(aiRes.items.map((x) => [x.index, x]));
+    const updatedItems: EnrichedItemPatch[] = [];
+    const dbOps: Array<{
+      id: string;
+      data: Prisma.ReceiptItemUpdateInput;
+    }> = [];
+
+    for (let idx = 0; idx < targetItems.length; idx++) {
+      const item = targetItems[idx];
+      const aiItem = aiByIndex.get(idx);
+      if (!aiItem) continue;
+
+      const inputInfo = targetInputs[idx];
+      const effectiveIsBag = Boolean(aiItem.is_bag_or_fee);
+      const catMatch = !effectiveIsBag
+        ? await matchProductInCatalog(aiItem.suggested_name).catch(() => null)
+        : null;
+
+      let matchedFullProduct: EnrichedItemPatch["product"] = null;
+      if (catMatch) {
+        const prod = await prisma.product.findUnique({
+          where: { id: catMatch.product.id },
+          select: {
+            id: true,
+            displayName: true,
+            category: true,
+            baseUnit: true,
+            isStaple: true,
+          },
+        });
+        if (prod) {
+          matchedFullProduct = {
+            id: prod.id,
+            displayName: prod.displayName,
+            category: prod.category,
+            baseUnit: prod.baseUnit as "KG" | "L" | "UNIT",
+            isStaple: Boolean(prod.isStaple),
+          };
+        }
+      }
+
+      const suggestedName =
+        matchedFullProduct?.displayName || aiItem.suggested_name.trim();
+      const suggestedCat =
+        matchedFullProduct?.category || normalizeCanonicalCategory(aiItem.category);
+      const productId = matchedFullProduct?.id ?? item.productId;
+      const matchConfidence = catMatch
+        ? catMatch.matchConfidence
+        : Number(item.matchConfidence);
+
+      let effectiveBaseUnit = item.baseUnit as "KG" | "L" | "UNIT";
+      let unitMeasure = Number(item.unitMeasure) || 1;
+      let pricePerBaseUnit = Number(item.pricePerBaseUnit) || 0;
+
+      if (!inputInfo.isVariableWeight) {
+        const resolved = computePackUnitAndPrice({
+          rawName: item.rawName,
+          discountHints: inputInfo.discountHints,
+          suggestedName,
+          category: suggestedCat,
+          matchedProductBaseUnit: matchedFullProduct?.baseUnit,
+          aiBaseUnit: aiItem.base_unit,
+          aiUnitMeasurePerPack: aiItem.unit_measure_per_pack,
+          unitPrice: Number(item.unitPrice) || 0,
+          totalPrice: Number(item.totalPrice) || 0,
+          quantity: Number(item.quantity) || 1,
+        });
+
+        effectiveBaseUnit = resolved.baseUnit;
+        unitMeasure = resolved.unitMeasure;
+        pricePerBaseUnit = resolved.pricePerBaseUnit;
+      }
+
+      dbOps.push({
+        id: item.id,
+        data: {
+          suggestedName,
+          suggestedCat,
+          matchConfidence,
+          product: productId ? { connect: { id: productId } } : { disconnect: true },
+          baseUnit: effectiveBaseUnit,
+          unitMeasure: new Prisma.Decimal(unitMeasure),
+          pricePerBaseUnit: new Prisma.Decimal(pricePerBaseUnit),
+          excluded: effectiveIsBag ? true : item.excluded,
+        },
+      });
+
+      updatedItems.push({
+        id: item.id,
+        suggestedName,
+        suggestedCat,
+        matchConfidence,
+        productId,
+        baseUnit: effectiveBaseUnit,
+        unitMeasure,
+        pricePerBaseUnit,
+        excluded: effectiveIsBag ? true : item.excluded,
+        product: matchedFullProduct,
+      });
+    }
+
+    const nextReceiptAiProvider =
+      receipt.aiProvider === "dia-pos" || !receipt.aiProvider
+        ? `dia-pos+${aiRes.aiProvider}`
+        : receipt.aiProvider;
+
+    await prisma.$transaction(async (tx) => {
+      for (const op of dbOps) {
+        await tx.receiptItem.update({
+          where: { id: op.id },
+          data: op.data,
+        });
+      }
+
+      if (nextReceiptAiProvider !== receipt.aiProvider) {
+        await tx.receipt.update({
+          where: { id: receiptId },
+          data: { aiProvider: nextReceiptAiProvider },
+        });
+      }
+    });
+
+    revalidatePath(`/receipts/${receiptId}/review`);
+    revalidatePath("/my-receipts");
+
+    return {
+      success: true,
+      enrichedCount: updatedItems.length,
+      aiProvider: aiRes.aiProvider,
+      nextReceiptAiProvider,
+      updatedItems,
+    };
+  } catch (error) {
+    console.error("[enrichReceiptItemsWithAIAction] Error enriching items:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error ? error.message : "Failed to resolve item names with AI.",
     };
   }
 }

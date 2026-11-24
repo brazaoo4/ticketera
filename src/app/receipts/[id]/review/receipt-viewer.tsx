@@ -16,6 +16,8 @@ interface ReceiptViewerProps {
   receiptId: string;
   sourceFile: string;
   hasOriginalPdf?: boolean;
+  fileVersion?: string;
+  isDigitalDia?: boolean;
   isMobileModal?: boolean;
   onCloseMobileModal?: () => void;
 }
@@ -24,6 +26,8 @@ export function ReceiptViewer({
   receiptId,
   sourceFile,
   hasOriginalPdf,
+  fileVersion,
+  isDigitalDia,
 }: ReceiptViewerProps) {
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -32,6 +36,7 @@ export function ReceiptViewer({
 
   const isPdfOrHasPdf = sourceFile.toLowerCase().endsWith(".pdf") || Boolean(hasOriginalPdf);
   const fileUrl = `/api/receipts/${receiptId}/file`;
+  const imageUrl = fileVersion ? `${fileUrl}?v=${encodeURIComponent(fileVersion)}` : fileUrl;
 
   const handleZoomIn = () => setZoom((prev) => Math.min(prev + 0.25, 3));
   const handleZoomOut = () => setZoom((prev) => Math.max(prev - 0.25, 0.5));
@@ -48,11 +53,20 @@ export function ReceiptViewer({
         <div className="flex items-center gap-2 text-zinc-300 font-medium">
           <FileText className="w-3.5 h-3.5 text-emerald-400" />
           <span className="truncate max-w-[140px] sm:max-w-[200px]">
-            {isPdfOrHasPdf ? "Digital PDF Receipt" : "Original Scanned Photo"}
+            {isPdfOrHasPdf
+              ? "Digital PDF Receipt"
+              : isDigitalDia
+              ? "Digital Dia Receipt"
+              : "Original Scanned Photo"}
           </span>
           {isPdfOrHasPdf && (
             <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono">
               PDF
+            </span>
+          )}
+          {!isPdfOrHasPdf && isDigitalDia && (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono">
+              DIA
             </span>
           )}
         </div>
@@ -117,7 +131,7 @@ export function ReceiptViewer({
             </>
           )}
           <a
-            href={isPdfOrHasPdf ? `${fileUrl}?original=true` : fileUrl}
+            href={isPdfOrHasPdf ? `${fileUrl}?original=true` : imageUrl}
             target="_blank"
             rel="noreferrer"
             className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-emerald-400 transition-colors ml-1"
@@ -160,7 +174,7 @@ export function ReceiptViewer({
             )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={fileUrl}
+              src={imageUrl}
               alt="Receipt evidence"
               onLoad={() => setIsLoading(false)}
               onError={() => {
