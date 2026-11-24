@@ -4,6 +4,12 @@ import { requireAuthUser, requireAdminUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { normalizeBarcode } from "@/lib/catalog/parser";
+import {
+  lookupOpenFoodFactsByBarcode,
+  searchOpenFoodFacts,
+} from "@/lib/catalog/openfoodfacts";
 
 export async function deleteSightingAction(receiptItemId: string, productSlug: string) {
   try {
@@ -74,6 +80,11 @@ export async function updateProductDetailsAction(
     category: string;
     baseUnit: "KG" | "L" | "UNIT";
     isStaple: boolean;
+    nutriScore?: "a" | "b" | "c" | "d" | "e" | null;
+    novaGroup?: 1 | 2 | 3 | 4 | null;
+    proteinPer100g?: number | null;
+    kcalPer100g?: number | null;
+    ean?: string | null;
   }
 ) {
   try {
@@ -95,6 +106,54 @@ export async function updateProductDetailsAction(
 
     const baseUnitChanged = existing.baseUnit !== data.baseUnit;
 
+    const nutritionPatch: Prisma.ProductUpdateInput = {};
+    let hasNutritionEdit = false;
+
+    if (data.nutriScore !== undefined) {
+      const g = data.nutriScore ? data.nutriScore.toLowerCase() : null;
+      nutritionPatch.nutriScore =
+        g === "a" || g === "b" || g === "c" || g === "d" || g === "e" ? g : null;
+      hasNutritionEdit = true;
+    }
+    if (data.novaGroup !== undefined) {
+      nutritionPatch.novaGroup =
+        data.novaGroup === 1 ||
+        data.novaGroup === 2 ||
+        data.novaGroup === 3 ||
+        data.novaGroup === 4
+          ? data.novaGroup
+          : null;
+      hasNutritionEdit = true;
+    }
+    if (data.proteinPer100g !== undefined) {
+      nutritionPatch.proteinPer100g =
+        data.proteinPer100g !== null &&
+        Number.isFinite(data.proteinPer100g) &&
+        data.proteinPer100g >= 0 &&
+        data.proteinPer100g <= 100
+          ? new Prisma.Decimal(Number(data.proteinPer100g.toFixed(2)))
+          : null;
+      hasNutritionEdit = true;
+    }
+    if (data.kcalPer100g !== undefined) {
+      nutritionPatch.kcalPer100g =
+        data.kcalPer100g !== null &&
+        Number.isFinite(data.kcalPer100g) &&
+        data.kcalPer100g >= 0 &&
+        data.kcalPer100g <= 1000
+          ? new Prisma.Decimal(Number(data.kcalPer100g.toFixed(1)))
+          : null;
+      hasNutritionEdit = true;
+    }
+    if (data.ean !== undefined) {
+      nutritionPatch.ean = normalizeBarcode(data.ean) ?? null;
+      hasNutritionEdit = true;
+    }
+    if (hasNutritionEdit) {
+      nutritionPatch.nutritionSource = "manual";
+      nutritionPatch.nutritionUpdatedAt = new Date();
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.product.update({
         where: { id: productId },
@@ -103,6 +162,7 @@ export async function updateProductDetailsAction(
           category: data.category,
           baseUnit: data.baseUnit,
           isStaple: data.isStaple,
+          ...nutritionPatch,
         },
       });
 
@@ -121,6 +181,8 @@ export async function updateProductDetailsAction(
     revalidatePath("/products");
     revalidatePath("/compare");
     revalidatePath("/stores");
+    revalidatePath("/my-stats");
+    revalidatePath("/admin/products");
     revalidatePath("/");
 
     return { success: true };
@@ -129,6 +191,153 @@ export async function updateProductDetailsAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to update product.",
+    };
+  }
+}
+
+export async function fetchAndCacheProductNutritionAction(
+  productId: string,
+  barcodeOrQuery?: string
+) {
+  let user;
+  try {
+    user = await requireAuthUser();
+  } catch {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const rateResult = await checkRateLimit({
+    key: `nutrition-single:${user.id}`,
+    limit: 30,
+    windowSeconds: 60,
+  });
+  if (!rateResult.success) {
+    return {
+      success: false,
+      error: `Too many OpenFoodFacts requests. Retry in ${rateResult.resetSeconds}s.`,
+    };
+  }
+
+  try {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: {
+        id: true,
+        slug: true,
+        displayName: true,
+        ean: true,
+      },
+    });
+
+    if (!product) {
+      return { success: false, error: "Product not found." };
+    }
+
+    const inputTrimmed = barcodeOrQuery?.trim() || "";
+    const parsedBarcode = normalizeBarcode(inputTrimmed || product.ean);
+
+    let match = parsedBarcode
+      ? await lookupOpenFoodFactsByBarcode(parsedBarcode)
+      : null;
+
+    if (!match) {
+      const queryTerm =
+        inputTrimmed && !parsedBarcode ? inputTrimmed : product.displayName;
+      const matches = await searchOpenFoodFacts({
+        query: queryTerm,
+        requireQuantity: false,
+      });
+      match =
+        matches.find(
+          (m) =>
+            m.nutrition &&
+            (m.nutrition.nutriScore !== null ||
+              m.nutrition.novaGroup !== null ||
+              m.nutrition.proteinPer100g !== null ||
+              m.nutrition.kcalPer100g !== null)
+        ) ||
+        matches[0] ||
+        null;
+    }
+
+    const nutrition = match?.nutrition ?? null;
+    const resolvedEan = nutrition?.ean || match?.ean || parsedBarcode || product.ean;
+
+    if (!nutrition && !resolvedEan) {
+      await prisma.product.update({
+        where: { id: product.id },
+        data: { nutritionUpdatedAt: new Date() },
+      });
+      return {
+        success: true,
+        found: false,
+        nutrition: null,
+        matchName: null,
+      };
+    }
+
+    const updated = await prisma.product.update({
+      where: { id: product.id },
+      data: {
+        nutriScore: nutrition?.nutriScore ?? undefined,
+        novaGroup: nutrition?.novaGroup ?? undefined,
+        proteinPer100g:
+          nutrition?.proteinPer100g !== null && nutrition?.proteinPer100g !== undefined
+            ? new Prisma.Decimal(nutrition.proteinPer100g)
+            : undefined,
+        kcalPer100g:
+          nutrition?.kcalPer100g !== null && nutrition?.kcalPer100g !== undefined
+            ? new Prisma.Decimal(nutrition.kcalPer100g)
+            : undefined,
+        ean: resolvedEan ?? undefined,
+        nutritionSource: "openfoodfacts",
+        nutritionUpdatedAt: new Date(),
+      },
+      select: {
+        nutriScore: true,
+        novaGroup: true,
+        proteinPer100g: true,
+        kcalPer100g: true,
+        ean: true,
+        nutritionSource: true,
+        nutritionUpdatedAt: true,
+      },
+    });
+
+    revalidatePath(`/products/${product.slug}`);
+    revalidatePath("/products");
+    revalidatePath("/my-stats");
+    revalidatePath("/admin/products");
+
+    return {
+      success: true,
+      found: Boolean(
+        updated.nutriScore ||
+          updated.novaGroup ||
+          updated.proteinPer100g !== null ||
+          updated.kcalPer100g !== null
+      ),
+      matchName: match?.productName || null,
+      nutrition: {
+        nutriScore: updated.nutriScore,
+        novaGroup: updated.novaGroup,
+        proteinPer100g:
+          updated.proteinPer100g !== null ? Number(updated.proteinPer100g) : null,
+        kcalPer100g:
+          updated.kcalPer100g !== null ? Number(updated.kcalPer100g) : null,
+        ean: updated.ean,
+        nutritionSource: updated.nutritionSource,
+        nutritionUpdatedAt: updated.nutritionUpdatedAt?.toISOString() ?? null,
+      },
+    };
+  } catch (err) {
+    console.error("[fetchAndCacheProductNutritionAction] Error:", err);
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Failed to fetch product nutrition from OpenFoodFacts.",
     };
   }
 }

@@ -48,6 +48,12 @@ export default async function AdminProductsPage() {
     isStaple: p.isStaple,
     sightingsCount: p._count.receiptItems,
     aliasesCount: p._count.aliases,
+    nutriScore: p.nutriScore ?? null,
+    novaGroup: p.novaGroup ?? null,
+    proteinPer100g:
+      p.proteinPer100g !== null ? Number(p.proteinPer100g) : null,
+    kcalPer100g: p.kcalPer100g !== null ? Number(p.kcalPer100g) : null,
+    ean: p.ean ?? null,
   }));
 
   const totalProducts = products.length;

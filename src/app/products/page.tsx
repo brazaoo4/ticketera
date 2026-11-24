@@ -54,6 +54,9 @@ export default async function ProductsPage() {
     category: p.category,
     baseUnit: p.baseUnit as "KG" | "L" | "UNIT",
     isStaple: p.isStaple,
+    nutriScore: p.nutriScore ?? null,
+    novaGroup: p.novaGroup ?? null,
+    ean: p.ean ?? null,
     sightings: p.receiptItems.map((item) => ({
       purchaseDate: item.receipt.purchaseDate.toISOString(),
       storeName: item.receipt.store.name,

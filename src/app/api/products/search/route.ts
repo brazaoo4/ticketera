@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { normalizeBarcode } from "@/lib/catalog/parser";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,42 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = req.nextUrl;
+  const barcodeParam = searchParams.get("barcode")?.trim() || "";
+  if (barcodeParam) {
+    const ean = normalizeBarcode(barcodeParam);
+    if (!ean) {
+      return NextResponse.json({ products: [], barcode: null });
+    }
+
+    const barcodeProducts = await prisma.product.findMany({
+      where: {
+        OR: [{ ean }, { aliases: { some: { barcode: ean } } }],
+        receiptItems: {
+          some: {
+            confirmed: true,
+            excluded: false,
+            receipt: { status: "CONFIRMED" },
+          },
+        },
+      },
+      take: 8,
+      select: {
+        id: true,
+        displayName: true,
+        category: true,
+        baseUnit: true,
+        isStaple: true,
+        slug: true,
+        nutriScore: true,
+        novaGroup: true,
+        ean: true,
+      },
+      orderBy: [{ isStaple: "desc" }, { displayName: "asc" }],
+    });
+
+    return NextResponse.json({ products: barcodeProducts, barcode: ean });
+  }
+
   const q = searchParams.get("q")?.trim() || "";
 
   if (!q) {

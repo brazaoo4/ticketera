@@ -14,7 +14,12 @@ import {
   Clock,
   Flame,
   ChevronDown,
+  ScanBarcode,
+  Loader2,
 } from "lucide-react";
+import { BarcodeScannerModal } from "@/components/common/barcode-scanner-modal";
+import { getNutriScoreBadgeStyle } from "@/lib/analytics/nutrition";
+import type { CatalogLookupResult } from "@/lib/catalog/parser";
 
 export interface CatalogSighting {
   purchaseDate: string;
@@ -32,6 +37,9 @@ export interface CatalogProduct {
   category: string;
   baseUnit: "KG" | "L" | "UNIT";
   isStaple: boolean;
+  nutriScore?: string | null;
+  novaGroup?: number | null;
+  ean?: string | null;
   sightings: CatalogSighting[];
 }
 
@@ -110,6 +118,73 @@ function ProductsContent({ products }: { products: CatalogProduct[] }) {
       ? initialSort
       : "name"
   );
+  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
+  const [barcodeResult, setBarcodeResult] = useState<{
+    loading: boolean;
+    ean: string;
+    localMatches: Array<{ id: string; slug: string; displayName: string; category: string }>;
+    offMatch: CatalogLookupResult | null;
+    error?: string | null;
+  } | null>(null);
+
+  const handleBarcodeDetected = async (ean: string) => {
+    setBarcodeModalOpen(false);
+    setBarcodeResult({
+      loading: true,
+      ean,
+      localMatches: [],
+      offMatch: null,
+      error: null,
+    });
+
+    try {
+      const localRes = await fetch(
+        `/api/products/search?barcode=${encodeURIComponent(ean)}`
+      );
+      const localData = localRes.ok ? await localRes.json() : { products: [] };
+      const localMatches = Array.isArray(localData.products)
+        ? localData.products
+        : [];
+
+      let offMatch: CatalogLookupResult | null = null;
+      try {
+        const offRes = await fetch(
+          `/api/catalog/lookup?barcode=${encodeURIComponent(ean)}`
+        );
+        if (offRes.ok) {
+          const offData = await offRes.json();
+          offMatch = offData.offMatch || null;
+        }
+      } catch {
+        // Public catalog unauthenticated visitors gracefully skip OFF API call
+      }
+
+      if (localMatches.length > 0) {
+        setSearchQuery(localMatches[0].displayName);
+      } else if (offMatch?.productName) {
+        setSearchQuery(offMatch.productName);
+      }
+
+      setBarcodeResult({
+        loading: false,
+        ean,
+        localMatches,
+        offMatch,
+        error:
+          localMatches.length === 0 && !offMatch
+            ? `No tracked product or OpenFoodFacts entry matched EAN ${ean}.`
+            : null,
+      });
+    } catch {
+      setBarcodeResult({
+        loading: false,
+        ean,
+        localMatches: [],
+        offMatch: null,
+        error: "Barcode lookup failed.",
+      });
+    }
+  };
 
   // Keep search in sync
   useEffect(() => {
@@ -382,6 +457,17 @@ function ProductsContent({ products }: { products: CatalogProduct[] }) {
                 <option value="most_bought">Most Bought</option>
               </select>
             </div>
+
+            {/* Secondary Barcode / EAN Lookup Trigger */}
+            <button
+              type="button"
+              onClick={() => setBarcodeModalOpen(true)}
+              aria-label="Scan barcode"
+              title="Secondary barcode / EAN lookup"
+              className="h-9 w-9 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-400 hover:text-emerald-400 flex items-center justify-center whitespace-nowrap shrink-0 transition-colors"
+            >
+              <ScanBarcode className="w-4 h-4 shrink-0" />
+            </button>
           </div>
 
           {/* Row 2 on mobile / Right side on desktop: Timeframe & Price Mode */}
@@ -450,6 +536,63 @@ function ProductsContent({ products }: { products: CatalogProduct[] }) {
         </div>
       </div>
 
+      {/* Barcode Lookup Result Banner (when secondary EAN scan was used) */}
+      {barcodeResult && (
+        <div className="rounded-2xl border border-emerald-500/30 bg-zinc-900/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <ScanBarcode className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-mono text-zinc-300 tabular-nums">
+              EAN {barcodeResult.ean}:
+            </span>
+            {barcodeResult.loading ? (
+              <span className="inline-flex items-center gap-1.5 text-zinc-400 font-mono">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                <span>Looking up product...</span>
+              </span>
+            ) : barcodeResult.localMatches.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {barcodeResult.localMatches.map((m) => (
+                  <Link
+                    key={m.id}
+                    href={`/products/${m.slug}`}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold whitespace-nowrap shrink-0"
+                  >
+                    <span>{m.displayName}</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </Link>
+                ))}
+              </div>
+            ) : barcodeResult.offMatch ? (
+              <span className="text-zinc-200">
+                <strong>{barcodeResult.offMatch.productName}</strong>
+                {barcodeResult.offMatch.brand ? ` (${barcodeResult.offMatch.brand})` : ""}
+                {barcodeResult.offMatch.rawQuantityText
+                  ? ` · ${barcodeResult.offMatch.rawQuantityText}`
+                  : ""}
+              </span>
+            ) : (
+              <span className="text-amber-300 font-mono">
+                {barcodeResult.error || "No matching product found."}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setBarcodeResult(null)}
+            className="p-1 rounded-lg text-zinc-400 hover:text-white whitespace-nowrap shrink-0"
+            aria-label="Dismiss barcode result"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      <BarcodeScannerModal
+        isOpen={barcodeModalOpen}
+        onClose={() => setBarcodeModalOpen(false)}
+        onDetected={(code) => void handleBarcodeDetected(code)}
+      />
+
       {/* Grid of Clean Product Cards */}
       {processedProducts.length === 0 ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-12 text-center max-w-md mx-auto space-y-3">
@@ -475,6 +618,7 @@ function ProductsContent({ products }: { products: CatalogProduct[] }) {
           {processedProducts.map((p) => {
             const isNegative = p.periodChangePercent < 0;
             const isPositive = p.periodChangePercent > 0;
+            const nsBadge = getNutriScoreBadgeStyle(p.nutriScore);
 
             return (
               <Link
@@ -489,6 +633,14 @@ function ProductsContent({ products }: { products: CatalogProduct[] }) {
                       <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700/60 text-[10px] font-medium whitespace-nowrap shrink-0">
                         {p.category}
                       </span>
+                      {nsBadge && (
+                        <span
+                          className={`px-1.5 py-0.5 rounded border text-[10px] font-mono font-bold whitespace-nowrap shrink-0 ${nsBadge.className}`}
+                          title={`Nutri-Score ${nsBadge.letter}`}
+                        >
+                          NS {nsBadge.letter}
+                        </span>
+                      )}
                       {p.isStaple && (
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" title="Staple item" />
                       )}

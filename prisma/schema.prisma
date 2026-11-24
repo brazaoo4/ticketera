@@ -41,6 +41,7 @@ model User {
   enabled          Boolean           @default(true)
   receipts         Receipt[]
   storeConnections StoreConnection[]
+  monthlyBudgets   MonthlyBudget[]
   createdAt        DateTime          @default(now())
 }
 
@@ -78,18 +79,27 @@ model Receipt {
 }
 
 model Product {
-  id           String         @id @default(cuid())
-  slug         String         @unique
-  displayName  String
-  category     String
-  baseUnit     BaseUnit       @default(UNIT)
-  isStaple     Boolean        @default(false)
-  aliases      ProductAlias[]
-  receiptItems ReceiptItem[]
-  createdAt    DateTime       @default(now())
+  id                 String         @id @default(cuid())
+  slug               String         @unique
+  displayName        String
+  category           String
+  baseUnit           BaseUnit       @default(UNIT)
+  isStaple           Boolean        @default(false)
+  nutriScore         String?        // "a" | "b" | "c" | "d" | "e"
+  novaGroup          Int?           // 1 | 2 | 3 | 4
+  proteinPer100g     Decimal?       @db.Decimal(6, 2)
+  kcalPer100g        Decimal?       @db.Decimal(7, 2)
+  ean                String?
+  nutritionSource    String?        // "openfoodfacts" | "manual"
+  nutritionUpdatedAt DateTime?
+  aliases            ProductAlias[]
+  receiptItems       ReceiptItem[]
+  createdAt          DateTime       @default(now())
 
   @@index([category])
   @@index([isStaple])
+  @@index([ean])
+  @@index([novaGroup])
 }
 
 model ProductAlias {
@@ -101,9 +111,11 @@ model ProductAlias {
   product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   unitMeasurePerPack Decimal? @db.Decimal(10, 3) // Net measure per 1 pack/bottle (e.g. 1.500 for 1.5L, 0.500 for 4x125g). Null if variable checkout weight.
   isVariableWeight   Boolean  @default(false)    // True if weighed at checkout (e.g. 0.547 kg chicken breast or loose fruit)
+  barcode            String?
   createdAt          DateTime @default(now())
 
   @@unique([storeId, rawAlias])
+  @@index([barcode])
 }
 
 model ReceiptItem {
@@ -138,6 +150,19 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model MonthlyBudget {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category      String   // "__OVERALL__" or one of CANONICAL_CATEGORIES
+  monthlyTarget Decimal  @db.Decimal(10, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, category])
+  @@index([userId])
 }
 
 model StoreConnection {

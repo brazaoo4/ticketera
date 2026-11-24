@@ -160,11 +160,14 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### ⚡ 15-Second Split-Screen Review Workstation
 - Original receipt image/PDF sits sticky on the left with interactive zoom and pan.
 - Interactive line-item editor with **`Δ €0.00` Math Sanity Bar**, verifying that item subtotals match the receipt's printed total.
-- **One-Click Supermarket Catalog Lookup:** Integrated OpenFoodFacts Spain lookup with store-brand matching (Hacendado, Milbona, etc.) to autofill package weights and canonical names.
+- **One-Click Supermarket Catalog & Barcode Lookup:** Integrated OpenFoodFacts Spain lookup with store-brand matching (Hacendado, Milbona, etc.) and an unobtrusive secondary EAN barcode scanner (`BarcodeDetector`) to autofill package weights, canonical names, and cached nutritional metadata.
 - **Rapid "Confirm & Next Pending" Queue:** Confirming trained aliases saves memory rules (`unitMeasurePerPack`, `isVariableWeight`), auto-applying sizes to subsequent tickets in the batch.
+- **Admin Duplicate Product Merge (`/admin/products`):** Suggested duplicate clusters and multi-select one-click merge reassigning all `ReceiptItem` and `ProductAlias` records atomically in a single transaction.
 
-### 📊 Deep Inflation & Grocery Intelligence
+### 📊 Deep Inflation, Budget & Nutrition Intelligence
 - **"Tu IPC Real" (Personal Inflation Rate):** Computes your consumption-weighted personal inflation index against a general staple basket benchmark.
+- **Monthly Category Budgets & Pacing (`/my-stats`):** Set monthly spending targets overall or per grocery category with end-of-month pacing projections (`"On track for €X vs. €Y budget"`) and store-share breakdowns.
+- **Nutrition & Protein Value Insights:** Caches lightweight OpenFoodFacts Nutri-Score, NOVA group, protein, and kcal/100g metadata to surface **protein per €** rankings and ultra-processed (`NOVA 4`) basket share.
 - **Shrinkflation Radar ("Radar de Reduflación"):** Detects stealth pack reductions ($\ge 5\%$) where the shelf pack price remained identical ($\pm 10\%$) while the price per kg or liter spiked ($\ge 5\%$).
 - **Spanish Grocery Tax & IVA Tracker:** Visualizes printed tax breakdown tables (0%–4% Superreducido, 5%–10% Reducido, 21% General) and tracks effective tax rates over time.
 - **Multi-Store Basket Comparator (`/compare`):** Select products to simulate weekly shopping across chains, comparing single-store totals against a "Smart Split Basket" optimal route.
@@ -173,7 +176,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### 📱 Progressive Web App (PWA) & Data Portability
 - **Installable PWA:** Full offline fallback and standalone app mode on Android and iOS.
 - **Native Android Share Target (`POST /upload-share`):** Share a PDF receipt directly from your supermarket app (Mercadona, Lidl Plus) into Ticketera without downloading it first.
-- **One-Click Export:** Download full Excel-safe UTF-8 BOM CSVs (`items_csv`, `receipts_csv`) or complete structured JSON backups anytime.
+- **Portable Backup & Safe Restore:** Download Excel-safe UTF-8 BOM CSVs (`items_csv`, `receipts_csv`), structured JSON backups, or complete **`.zip` Portable Backup Bundles** containing database records alongside stored receipt artifacts (`WebP`, `PDF`, `JSON`), paired with pre-restore inspection and merge/replace import in `/admin/settings`.
 
 ---
 

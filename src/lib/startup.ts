@@ -78,6 +78,37 @@ export async function ensureDatabaseSchema() {
       `).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "tokenExpiresAt" TIMESTAMP(3);`).catch(() => null);
       await prisma.$executeRawUnsafe(`ALTER TABLE "StoreConnection" ADD COLUMN IF NOT EXISTS "consecutiveFailures" INTEGER NOT NULL DEFAULT 0;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "nutriScore" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "novaGroup" INTEGER;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "proteinPer100g" DECIMAL(6,2);`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "kcalPer100g" DECIMAL(7,2);`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "ean" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "nutritionSource" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "nutritionUpdatedAt" TIMESTAMP(3);`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Product_ean_idx" ON "Product"("ean");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Product_novaGroup_idx" ON "Product"("novaGroup");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "ProductAlias" ADD COLUMN IF NOT EXISTS "barcode" TEXT;`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ProductAlias_barcode_idx" ON "ProductAlias"("barcode");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "MonthlyBudget" (
+          "id" TEXT NOT NULL,
+          "userId" TEXT NOT NULL,
+          "category" TEXT NOT NULL,
+          "monthlyTarget" DECIMAL(10,2) NOT NULL,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT "MonthlyBudget_pkey" PRIMARY KEY ("id")
+        );
+      `).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "MonthlyBudget_userId_category_key" ON "MonthlyBudget"("userId", "category");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "MonthlyBudget_userId_idx" ON "MonthlyBudget"("userId");`).catch(() => null);
+      await prisma.$executeRawUnsafe(`
+        DO $$ BEGIN
+          ALTER TABLE "MonthlyBudget" ADD CONSTRAINT "MonthlyBudget_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+        END $$;
+      `).catch(() => null);
       return;
     }
 
@@ -173,6 +204,13 @@ export async function ensureDatabaseSchema() {
         "category" TEXT NOT NULL,
         "baseUnit" "BaseUnit" NOT NULL DEFAULT 'UNIT',
         "isStaple" BOOLEAN NOT NULL DEFAULT false,
+        "nutriScore" TEXT,
+        "novaGroup" INTEGER,
+        "proteinPer100g" DECIMAL(6,2),
+        "kcalPer100g" DECIMAL(7,2),
+        "ean" TEXT,
+        "nutritionSource" TEXT,
+        "nutritionUpdatedAt" TIMESTAMP(3),
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
       );`,
@@ -184,6 +222,7 @@ export async function ensureDatabaseSchema() {
         "productId" TEXT NOT NULL,
         "unitMeasurePerPack" DECIMAL(10,3),
         "isVariableWeight" BOOLEAN NOT NULL DEFAULT false,
+        "barcode" TEXT,
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT "ProductAlias_pkey" PRIMARY KEY ("id")
       );`,
@@ -215,6 +254,16 @@ export async function ensureDatabaseSchema() {
         CONSTRAINT "SystemSetting_pkey" PRIMARY KEY ("key")
       );`,
 
+      `CREATE TABLE IF NOT EXISTS "MonthlyBudget" (
+        "id" TEXT NOT NULL,
+        "userId" TEXT NOT NULL,
+        "category" TEXT NOT NULL,
+        "monthlyTarget" DECIMAL(10,2) NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "MonthlyBudget_pkey" PRIMARY KEY ("id")
+      );`,
+
       `CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "Store_name_key" ON "Store"("name");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "Store_slug_key" ON "Store"("slug");`,
@@ -228,7 +277,12 @@ export async function ensureDatabaseSchema() {
       `CREATE UNIQUE INDEX IF NOT EXISTS "Product_slug_key" ON "Product"("slug");`,
       `CREATE INDEX IF NOT EXISTS "Product_category_idx" ON "Product"("category");`,
       `CREATE INDEX IF NOT EXISTS "Product_isStaple_idx" ON "Product"("isStaple");`,
+      `CREATE INDEX IF NOT EXISTS "Product_ean_idx" ON "Product"("ean");`,
+      `CREATE INDEX IF NOT EXISTS "Product_novaGroup_idx" ON "Product"("novaGroup");`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "ProductAlias_storeId_rawAlias_key" ON "ProductAlias"("storeId", "rawAlias");`,
+      `CREATE INDEX IF NOT EXISTS "ProductAlias_barcode_idx" ON "ProductAlias"("barcode");`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS "MonthlyBudget_userId_category_key" ON "MonthlyBudget"("userId", "category");`,
+      `CREATE INDEX IF NOT EXISTS "MonthlyBudget_userId_idx" ON "MonthlyBudget"("userId");`,
       `CREATE INDEX IF NOT EXISTS "ReceiptItem_productId_confirmed_excluded_idx" ON "ReceiptItem"("productId", "confirmed", "excluded");`,
       `CREATE INDEX IF NOT EXISTS "ReceiptItem_receiptId_idx" ON "ReceiptItem"("receiptId");`,
 
@@ -270,6 +324,12 @@ export async function ensureDatabaseSchema() {
 
       `DO $$ BEGIN
         ALTER TABLE "ReceiptItem" ADD CONSTRAINT "ReceiptItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;`,
+
+      `DO $$ BEGIN
+        ALTER TABLE "MonthlyBudget" ADD CONSTRAINT "MonthlyBudget_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
       EXCEPTION
         WHEN duplicate_object THEN null;
       END $$;`,
@@ -406,23 +466,11 @@ export async function cleanupSyntheticSeedDataAndDuplicates() {
           data: { productId: primary.id },
         });
 
-        // Reassign aliases safely
-        for (const alias of dup.aliases) {
-          const existingAlias = await prisma.productAlias.findUnique({
-            where: {
-              storeId_rawAlias: {
-                storeId: alias.storeId,
-                rawAlias: alias.rawAlias,
-              },
-            },
-          });
-          if (!existingAlias) {
-            await prisma.productAlias.update({
-              where: { id: alias.id },
-              data: { productId: primary.id },
-            });
-          }
-        }
+        // Reassign all aliases to primary (unique index is on (storeId, rawAlias), so no conflict with primary's own aliases)
+        await prisma.productAlias.updateMany({
+          where: { productId: dup.id },
+          data: { productId: primary.id },
+        });
 
         // Delete duplicate product
         await prisma.product.delete({

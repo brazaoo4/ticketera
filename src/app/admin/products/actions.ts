@@ -2,7 +2,9 @@
 
 import { requireAdminUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
+import { normalizeBarcode } from "@/lib/catalog/parser";
 
 export async function toggleProductStapleAction(productId: string, isStaple: boolean) {
   try {
@@ -35,6 +37,11 @@ export async function updateProductAction(
     category: string;
     baseUnit: "KG" | "L" | "UNIT";
     isStaple: boolean;
+    nutriScore?: "a" | "b" | "c" | "d" | "e" | null;
+    novaGroup?: 1 | 2 | 3 | 4 | null;
+    proteinPer100g?: number | null;
+    kcalPer100g?: number | null;
+    ean?: string | null;
   }
 ) {
   try {
@@ -55,6 +62,54 @@ export async function updateProductAction(
 
     const baseUnitChanged = existing.baseUnit !== data.baseUnit;
 
+    const nutritionPatch: Prisma.ProductUpdateInput = {};
+    let hasNutritionEdit = false;
+
+    if (data.nutriScore !== undefined) {
+      const g = data.nutriScore ? data.nutriScore.toLowerCase() : null;
+      nutritionPatch.nutriScore =
+        g === "a" || g === "b" || g === "c" || g === "d" || g === "e" ? g : null;
+      hasNutritionEdit = true;
+    }
+    if (data.novaGroup !== undefined) {
+      nutritionPatch.novaGroup =
+        data.novaGroup === 1 ||
+        data.novaGroup === 2 ||
+        data.novaGroup === 3 ||
+        data.novaGroup === 4
+          ? data.novaGroup
+          : null;
+      hasNutritionEdit = true;
+    }
+    if (data.proteinPer100g !== undefined) {
+      nutritionPatch.proteinPer100g =
+        data.proteinPer100g !== null &&
+        Number.isFinite(data.proteinPer100g) &&
+        data.proteinPer100g >= 0 &&
+        data.proteinPer100g <= 100
+          ? new Prisma.Decimal(Number(data.proteinPer100g.toFixed(2)))
+          : null;
+      hasNutritionEdit = true;
+    }
+    if (data.kcalPer100g !== undefined) {
+      nutritionPatch.kcalPer100g =
+        data.kcalPer100g !== null &&
+        Number.isFinite(data.kcalPer100g) &&
+        data.kcalPer100g >= 0 &&
+        data.kcalPer100g <= 1000
+          ? new Prisma.Decimal(Number(data.kcalPer100g.toFixed(1)))
+          : null;
+      hasNutritionEdit = true;
+    }
+    if (data.ean !== undefined) {
+      nutritionPatch.ean = normalizeBarcode(data.ean) ?? null;
+      hasNutritionEdit = true;
+    }
+    if (hasNutritionEdit) {
+      nutritionPatch.nutritionSource = "manual";
+      nutritionPatch.nutritionUpdatedAt = new Date();
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.product.update({
         where: { id: productId },
@@ -63,6 +118,7 @@ export async function updateProductAction(
           category: data.category,
           baseUnit: data.baseUnit,
           isStaple: data.isStaple,
+          ...nutritionPatch,
         },
       });
 
@@ -81,6 +137,7 @@ export async function updateProductAction(
     revalidatePath("/products");
     revalidatePath("/compare");
     revalidatePath("/stores");
+    revalidatePath("/my-stats");
     revalidatePath("/");
 
     return { success: true };
@@ -93,35 +150,50 @@ export async function updateProductAction(
   }
 }
 
-export async function mergeProductsAction(
-  sourceProductId: string,
+export async function mergeProductsBatchAction(
+  sourceProductIds: string[],
   targetProductId: string
 ) {
   try {
     await requireAdminUser();
 
-    if (sourceProductId === targetProductId) {
+    const uniqueSourceIds = Array.from(
+      new Set(sourceProductIds.map((id) => id.trim()).filter(Boolean))
+    );
+
+    if (uniqueSourceIds.length === 0) {
+      return { success: false, error: "Select at least one duplicate product to merge." };
+    }
+
+    if (uniqueSourceIds.includes(targetProductId)) {
       return { success: false, error: "Cannot merge a product into itself." };
     }
 
-    const [source, target] = await Promise.all([
-      prisma.product.findUnique({
-        where: { id: sourceProductId },
-        include: { aliases: true, receiptItems: true },
-      }),
-      prisma.product.findUnique({
-        where: { id: targetProductId },
-        include: { aliases: true },
-      }),
-    ]);
+    const result = await prisma.$transaction(async (tx) => {
+      const [sources, target] = await Promise.all([
+        tx.product.findMany({
+          where: { id: { in: uniqueSourceIds } },
+          include: {
+            _count: { select: { receiptItems: true, aliases: true } },
+          },
+        }),
+        tx.product.findUnique({
+          where: { id: targetProductId },
+        }),
+      ]);
 
-    if (!source) return { success: false, error: "Source product not found." };
-    if (!target) return { success: false, error: "Target product not found." };
+      if (!target) {
+        throw new Error("Target surviving product not found.");
+      }
+      if (sources.length === 0) {
+        throw new Error("No source duplicate products found.");
+      }
 
-    await prisma.$transaction(async (tx) => {
-      // 1. Reassign all ReceiptItems to target product
-      await tx.receiptItem.updateMany({
-        where: { productId: source.id },
+      const foundSourceIds = sources.map((s) => s.id);
+
+      // 1. Reassign all ReceiptItems to surviving target product
+      const updatedItems = await tx.receiptItem.updateMany({
+        where: { productId: { in: foundSourceIds } },
         data: {
           productId: target.id,
           suggestedName: target.displayName,
@@ -130,55 +202,106 @@ export async function mergeProductsAction(
         },
       });
 
-      // 2. Reassign ProductAliases safely
-      for (const alias of source.aliases) {
-        const existingTargetAlias = await tx.productAlias.findUnique({
-          where: {
-            storeId_rawAlias: {
-              storeId: alias.storeId,
-              rawAlias: alias.rawAlias,
-            },
-          },
-        });
+      // 2. Reassign all ProductAliases to surviving target product
+      // (storeId, rawAlias) is globally unique across all products, so updateMany safely preserves every alias.
+      const updatedAliases = await tx.productAlias.updateMany({
+        where: { productId: { in: foundSourceIds } },
+        data: { productId: target.id },
+      });
 
-        if (existingTargetAlias) {
-          // Alias already mapped for target store; delete source alias row
-          await tx.productAlias.delete({
-            where: { id: alias.id },
-          });
-        } else {
-          // Reassign alias to target product
-          await tx.productAlias.update({
-            where: { id: alias.id },
-            data: { productId: target.id },
-          });
+      // 3. Preserve staple status and backfill missing nutrition/EAN metadata onto survivor
+      const targetUpdate: Prisma.ProductUpdateInput = {};
+      if (!target.isStaple && sources.some((s) => s.isStaple)) {
+        targetUpdate.isStaple = true;
+      }
+      if (!target.nutriScore) {
+        const donor = sources.find((s) => s.nutriScore);
+        if (donor?.nutriScore) targetUpdate.nutriScore = donor.nutriScore;
+      }
+      if (target.novaGroup === null) {
+        const donor = sources.find((s) => s.novaGroup !== null);
+        if (donor && donor.novaGroup !== null) targetUpdate.novaGroup = donor.novaGroup;
+      }
+      if (target.proteinPer100g === null) {
+        const donor = sources.find((s) => s.proteinPer100g !== null);
+        if (donor && donor.proteinPer100g !== null) {
+          targetUpdate.proteinPer100g = donor.proteinPer100g;
+        }
+      }
+      if (target.kcalPer100g === null) {
+        const donor = sources.find((s) => s.kcalPer100g !== null);
+        if (donor && donor.kcalPer100g !== null) {
+          targetUpdate.kcalPer100g = donor.kcalPer100g;
+        }
+      }
+      if (!target.ean) {
+        const donor = sources.find((s) => s.ean);
+        if (donor?.ean) targetUpdate.ean = donor.ean;
+      }
+      if (!target.nutritionUpdatedAt) {
+        const donor = sources.find((s) => s.nutritionUpdatedAt);
+        if (donor?.nutritionUpdatedAt) {
+          targetUpdate.nutritionUpdatedAt = donor.nutritionUpdatedAt;
+          targetUpdate.nutritionSource = donor.nutritionSource || "openfoodfacts";
         }
       }
 
-      // 3. Delete source product
-      await tx.product.delete({
-        where: { id: source.id },
+      if (Object.keys(targetUpdate).length > 0) {
+        await tx.product.update({
+          where: { id: target.id },
+          data: targetUpdate,
+        });
+      }
+
+      // 4. Delete duplicate source products
+      await tx.product.deleteMany({
+        where: { id: { in: foundSourceIds } },
       });
+
+      return {
+        targetSlug: target.slug,
+        targetName: target.displayName,
+        sourceNames: sources.map((s) => s.displayName),
+        movedSightingsCount: updatedItems.count,
+        movedAliasesCount: updatedAliases.count,
+        mergedCount: sources.length,
+      };
     });
 
     revalidatePath("/admin/products");
-    revalidatePath(`/products/${target.slug}`);
+    revalidatePath(`/products/${result.targetSlug}`);
     revalidatePath("/products");
     revalidatePath("/compare");
     revalidatePath("/stores");
+    revalidatePath("/my-stats");
     revalidatePath("/");
+
+    const summaryText =
+      result.mergedCount === 1
+        ? `Merged "${result.sourceNames[0]}" into "${result.targetName}" (${result.movedSightingsCount} sightings, ${result.movedAliasesCount} aliases unified).`
+        : `Merged ${result.mergedCount} duplicates into "${result.targetName}" (${result.movedSightingsCount} sightings, ${result.movedAliasesCount} aliases unified).`;
 
     return {
       success: true,
-      message: `Successfully merged "${source.displayName}" into "${target.displayName}".`,
+      movedSightingsCount: result.movedSightingsCount,
+      movedAliasesCount: result.movedAliasesCount,
+      mergedCount: result.mergedCount,
+      message: summaryText,
     };
   } catch (err: unknown) {
-    console.error("[mergeProductsAction] Error:", err);
+    console.error("[mergeProductsBatchAction] Error:", err);
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to merge products.",
     };
   }
+}
+
+export async function mergeProductsAction(
+  sourceProductId: string,
+  targetProductId: string
+) {
+  return mergeProductsBatchAction([sourceProductId], targetProductId);
 }
 
 export async function deleteProductAction(productId: string) {

@@ -32,6 +32,9 @@ import {
 } from "lucide-react";
 import { ExportDataMenu } from "@/components/common/export-data-menu";
 import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation-types";
+import { MonthlyBudgetsSection } from "@/components/stats/monthly-budgets-section";
+import { NutritionValueSection } from "@/components/stats/nutrition-value-section";
+import type { UserBudgetTarget } from "@/lib/analytics/budgets";
 
 export interface TaxBreakdownBracket {
   rate: number;
@@ -68,9 +71,14 @@ export interface StatsItem {
   baseUnit: "KG" | "L" | "UNIT";
   unitMeasure: number;
   pricePerBaseUnit: number;
+  productId?: string | null;
   productSlug?: string | null;
   productName?: string | null;
   isStaple?: boolean;
+  nutriScore?: string | null;
+  novaGroup?: number | null;
+  proteinPer100g?: number | null;
+  kcalPer100g?: number | null;
 }
 
 export interface StapleSighting {
@@ -84,6 +92,8 @@ interface MyStatsClientProps {
   initialItems: StatsItem[];
   stapleSightings?: StapleSighting[];
   shrinkflationIncidents?: ShrinkflationIncident[];
+  initialBudgets?: UserBudgetTarget[];
+  untaggedFoodProductCount?: number;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -106,6 +116,8 @@ export function MyStatsClient({
   initialItems,
   stapleSightings = [],
   shrinkflationIncidents = [],
+  initialBudgets = [],
+  untaggedFoodProductCount = 0,
 }: MyStatsClientProps) {
   const [timeframe, setTimeframe] = useState<"3M" | "6M" | "1Y" | "2Y" | "All">("1Y");
   const [chartView, setChartView] = useState<"stacked" | "total">("stacked");
@@ -821,6 +833,14 @@ export function MyStatsClient({
             </div>
           </div>
 
+          {/* 2b. MONTHLY CATEGORY BUDGETS & PACING */}
+          <MonthlyBudgetsSection
+            receipts={initialReceipts}
+            items={initialItems}
+            initialBudgets={initialBudgets}
+            categoryColors={CATEGORY_COLORS}
+          />
+
           {/* 3. MONTHLY EXPENDITURE CHART (RECHARTS STACKED BAR) */}
           <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/40 p-6 sm:p-8 space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
@@ -1133,6 +1153,27 @@ export function MyStatsClient({
               </div>
             )}
           </div>
+
+          {/* 4b. NUTRITION & PROTEIN VALUE METRICS */}
+          <NutritionValueSection
+            items={filteredItems.map((i) => ({
+              productId: i.productId,
+              productSlug: i.productSlug,
+              productName: i.productName || i.suggestedName || i.rawName,
+              category: i.category,
+              purchaseDate: i.purchaseDate,
+              storeName: i.storeName,
+              storeBrandHex: i.storeBrandHex,
+              totalPrice: i.totalPrice,
+              baseUnit: i.baseUnit,
+              pricePerBaseUnit: i.pricePerBaseUnit,
+              nutriScore: i.nutriScore,
+              novaGroup: i.novaGroup,
+              proteinPer100g: i.proteinPer100g,
+              kcalPer100g: i.kcalPer100g,
+            }))}
+            untaggedFoodProductCount={untaggedFoodProductCount}
+          />
 
           {/* 5. TOP 5 MOST PURCHASED PRODUCTS & SHRINKFLATION WATCH */}
           <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/40 p-6 sm:p-8 space-y-5">
