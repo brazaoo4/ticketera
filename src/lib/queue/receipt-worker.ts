@@ -73,6 +73,8 @@ export function inferUnitAndMeasureHeuristics({
   const singleLMatch = combined.match(/(?:^|\s|\b)(\d+(?:[.,]\d+)?)\s*(?:L|LITROS?)(?:\b|$)/i);
   const multiClMatch = combined.match(/(?:^|\s|\b)(\d+)\s*X\s*(\d+)\s*CL\b/i);
   const singleClMatch = combined.match(/(?:^|\s|\b)(\d+)\s*CL\b/i);
+  const multiMlMatch = combined.match(/(?:^|\s|\b)(\d+)\s*X\s*(\d+(?:[.,]\d+)?)\s*ML\b/i);
+  const singleMlMatch = combined.match(/(?:^|\s|\b)(\d+(?:[.,]\d+)?)\s*ML\b/i);
 
   const docenaMatch = /\bDOCENA\b/i.test(combined);
   const packMatch = combined.match(/(?:PACK|P-)\s*(\d+)\b/i);
@@ -94,6 +96,14 @@ export function inferUnitAndMeasureHeuristics({
     measure = (parseInt(multiClMatch[1], 10) * parseInt(multiClMatch[2], 10)) / 100;
   } else if (singleClMatch && baseUnit === "L") {
     measure = parseInt(singleClMatch[1], 10) / 100;
+  } else if (multiMlMatch) {
+    baseUnit = "L";
+    measure = Number(
+      ((parseInt(multiMlMatch[1], 10) * parseFloat(multiMlMatch[2].replace(",", "."))) / 1000).toFixed(3)
+    );
+  } else if (singleMlMatch && category !== "Meat & Poultry" && category !== "Fish & Seafood") {
+    baseUnit = "L";
+    measure = Number((parseFloat(singleMlMatch[1].replace(",", ".")) / 1000).toFixed(3));
   } else if (docenaMatch) {
     baseUnit = "UNIT";
     measure = 12;

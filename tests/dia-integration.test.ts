@@ -18,8 +18,18 @@ import {
   encryptVaultJson,
   decryptVaultJson,
 } from "../src/lib/crypto/vault";
-import { renderDiaTicketToWebp } from "../src/lib/integrations/dia/render-ticket";
-import { inferSpanishGroceryCategory } from "../src/lib/integrations/dia/importer";
+import {
+  DIA_TICKET_RENDER_VERSION,
+  buildDiaTicketSvg,
+  ensureFreshDiaTicketWebp,
+  renderDiaTicketToWebp,
+  truncateText,
+} from "../src/lib/integrations/dia/render-ticket";
+import {
+  computePackUnitAndPrice,
+  inferSpanishGroceryCategory,
+} from "../src/lib/integrations/dia/importer";
+import { inferUnitAndMeasureHeuristics } from "../src/lib/queue/receipt-worker";
 import { DiaTicketDetailResponse, DiaTicketSummary } from "../src/lib/integrations/dia/types";
 import { UPLOAD_DIR } from "../src/lib/receipts/preprocess";
 
@@ -105,6 +115,53 @@ test("inferSpanishGroceryCategory classifies Spanish POS items and discount hint
     "Fruits & Vegetables"
   );
   assert.equal(inferSpanishGroceryCategory("BOLSA PLASTICO 70%"), "Other");
+  assert.equal(inferSpanishGroceryCategory("TÉ AL MANGO ZERO"), "Beverages");
+  assert.equal(inferSpanishGroceryCategory("FUZE TEA DE MARACUYÁ"), "Beverages");
+  assert.equal(inferSpanishGroceryCategory("CREM DENT FLUOR+CALC"), "Personal Care");
+  assert.equal(inferSpanishGroceryCategory("MENESTRA VEGECAMPO"), "Frozen Foods");
+  assert.equal(inferSpanishGroceryCategory("MUESLI TRIPLE CHOCO"), "Pantry");
+  assert.equal(inferSpanishGroceryCategory("BARRITA CHOCO Y SAL"), "Pantry");
+  assert.equal(inferSpanishGroceryCategory("MANZANILLA TETERÍA"), "Pantry");
+  assert.equal(inferSpanishGroceryCategory("PORCIONES NATU 16 UD"), "Dairy & Eggs");
+});
+
+test("inferUnitAndMeasureHeuristics parses ML single and multi-pack volumes", () => {
+  const redBull = inferUnitAndMeasureHeuristics({
+    rawName: "RED BULL SIN AZÚCAR RED BULL 250 ML",
+    suggestedName: "Red Bull Sin Azúcar",
+    category: "Beverages",
+    totalPrice: 3.38,
+    quantity: 2,
+  });
+  assert.equal(redBull.baseUnit, "L");
+  assert.equal(redBull.unitMeasure, 0.25);
+
+  const packLata = inferUnitAndMeasureHeuristics({
+    rawName: "FUZE TEA 6 X 330 ML",
+    suggestedName: "Fuze Tea",
+    category: "Beverages",
+    totalPrice: 5.94,
+    quantity: 1,
+  });
+  assert.equal(packLata.baseUnit, "L");
+  assert.equal(packLata.unitMeasure, 1.98);
+
+  const packed = computePackUnitAndPrice({
+    rawName: "FUZE TEA DE MARACUYÁ",
+    discountHints: ["FUZE TEA 330 ML"],
+    suggestedName: "Fuze Tea de Maracuyá",
+    category: "Beverages",
+    aiBaseUnit: "L",
+    aiUnitMeasurePerPack: 0.33,
+    unitPrice: 0.99,
+    totalPrice: 1.98,
+    quantity: 2,
+  });
+  assert.deepEqual(packed, {
+    baseUnit: "L",
+    unitMeasure: 0.66,
+    pricePerBaseUnit: 3,
+  });
 });
 
 test("encryptVaultJson and decryptVaultJson perform authenticated roundtrip", () => {
@@ -237,9 +294,17 @@ test("renderDiaTicketToWebp outputs high-contrast legible companion WebP and JSO
     },
   };
 
+  const { svg } = buildDiaTicketSvg(mockSummary, mockDetail);
+  assert.ok(svg.includes("DejaVu Sans Mono"), "SVG must specify bundled DejaVu Sans Mono font");
+  assert.ok(svg.includes("• 15 % Fruta y verdura"), "SVG discounts should use bullet prefix");
+  assert.equal(truncateText("A".repeat(60), 44).length, 44);
+
   const { webpPath, jsonPath } = await renderDiaTicketToWebp(testId, mockSummary, mockDetail);
   assert.ok(fs.existsSync(webpPath), "WebP file must exist");
   assert.ok(fs.existsSync(jsonPath), "JSON file must exist");
+
+  const writtenJson = JSON.parse(await fs.promises.readFile(jsonPath, "utf8"));
+  assert.equal(writtenJson.renderVersion, DIA_TICKET_RENDER_VERSION);
 
   const meta = await sharp(webpPath).metadata();
   assert.equal(meta.format, "webp");
@@ -249,6 +314,91 @@ test("renderDiaTicketToWebp outputs high-contrast legible companion WebP and JSO
   // Cleanup test artifacts
   await fs.promises.unlink(webpPath).catch(() => {});
   await fs.promises.unlink(jsonPath).catch(() => {});
+});
+
+test("ensureFreshDiaTicketWebp upgrades legacy DIA JSON previews and skips current version", async () => {
+  const testId = `test-dia-refresh-${Date.now()}`;
+  const jsonPath = path.join(UPLOAD_DIR, `${testId}.json`);
+  const webpPath = path.join(UPLOAD_DIR, `${testId}.webp`);
+
+  const mockSummary: DiaTicketSummary = {
+    ticket_unique_code: "ES22057020099999920261119100000",
+    submitted_date: "2026-11-19T10:00:00Z",
+    total_amount: 1.35,
+    online: false,
+    store_info: { address: "PZ OTELO 3-D", city: "Sevilla", postal_code: "41009" },
+    detail_params: { begin: 1795082400000, business: 1, country: "ES", pos: 1, store: 22057, ticket: 999999 },
+  };
+  const mockDetail: DiaTicketDetailResponse = {
+    currency: "€",
+    online: false,
+    header: {
+      cashier: 1,
+      code: 999999,
+      display_code: "999999",
+      pos: 1,
+      simplified_invoice: true,
+      store_address: "PZ OTELO 3-D",
+      store_code: 22057,
+      submitted_date: "2026-11-19T10:00:00Z",
+      ticket_unique_code: "ES22057020099999920261119100000",
+    },
+    payment: { payment_methods: [{ amount: 1.35, change_amount: 0, payment_method: "TARJETA" }], total_to_pay: 1.35 },
+    amount: {
+      employee_discount: 0,
+      shipping_amount: 0,
+      total_accumulated: 0,
+      total_amount: 1.35,
+      total_amount_without_discounts: 1.35,
+      total_discounts: 0,
+    },
+    corporate: {
+      amount: 1.35,
+      info: { fiscal_code: "B90480971", name: "DIA" },
+      items: [
+        {
+          amount: 1.35,
+          cancel: false,
+          code: 1,
+          name: "LECHE HIGH PROTEIN",
+          price_per_unit: 1.35,
+          quantity: 1,
+          tax: "A",
+          variable_weight: false,
+          weight: 0,
+        },
+      ],
+      taxes: [],
+    },
+  };
+
+  if (!fs.existsSync(UPLOAD_DIR)) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  }
+  await fs.promises.writeFile(
+    jsonPath,
+    JSON.stringify({ summary: mockSummary, detail: mockDetail }, null, 2),
+    "utf8"
+  );
+  await fs.promises.writeFile(webpPath, Buffer.from("stale-webp-stub"));
+
+  try {
+    const refreshed = await ensureFreshDiaTicketWebp(testId);
+    assert.equal(refreshed, true);
+
+    const updatedJson = JSON.parse(await fs.promises.readFile(jsonPath, "utf8"));
+    assert.equal(updatedJson.renderVersion, DIA_TICKET_RENDER_VERSION);
+
+    const meta = await sharp(webpPath).metadata();
+    assert.equal(meta.format, "webp");
+    assert.equal(meta.width, 640);
+
+    const secondPass = await ensureFreshDiaTicketWebp(testId);
+    assert.equal(secondPass, false);
+  } finally {
+    await fs.promises.unlink(webpPath).catch(() => {});
+    await fs.promises.unlink(jsonPath).catch(() => {});
+  }
 });
 
 test("getDiaJwtExpiration extracts exp claim from valid JWTs and handles invalid inputs", () => {

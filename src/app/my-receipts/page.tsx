@@ -282,7 +282,11 @@ export default async function MyReceiptsPage() {
                     <span className="flex items-center gap-1 text-[11px] text-zinc-500">
                       <Sparkles className="w-3 h-3 text-emerald-400" />
                       <span>
-                        {r.aiProvider === "dia-pos" ? "Club Dia Sync" : r.aiProvider}
+                        {r.aiProvider === "dia-pos"
+                          ? "Club Dia Sync"
+                          : r.aiProvider.startsWith("dia-pos+")
+                          ? `Club Dia + ${r.aiProvider.slice("dia-pos+".length)}`
+                          : r.aiProvider}
                       </span>
                     </span>
                   )}

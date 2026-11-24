@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { refreshStaleDiaTicketPreviews } from "@/lib/integrations/dia/render-ticket";
 
 
 
@@ -504,6 +505,9 @@ export async function runStartupSeed() {
     await migrateCategoriesToEnglish();
     await cleanupSyntheticSeedDataAndDuplicates();
     await bootstrapAdminUser();
+    await refreshStaleDiaTicketPreviews().catch((err) =>
+      console.warn("⚠️ [Startup] DIA preview refresh notice:", err)
+    );
     console.log("✅ [Startup] Database seed check finished successfully.");
   } catch (error) {
     console.warn(

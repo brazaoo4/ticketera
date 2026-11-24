@@ -262,7 +262,7 @@ export function DiaIntegrationClient({
                   )}
                 </div>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  Automated background sync for in-store and online purchases with zero AI token cost.
+                  Automated background sync for in-store and online purchases with AI-assisted product name resolution.
                 </p>
               </div>
             </div>

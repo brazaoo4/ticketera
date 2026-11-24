@@ -1,7 +1,7 @@
 import { ParsedReceipt, ParsedReceiptSchema } from "../schema";
 import { RECEIPT_PARSE_SYSTEM_PROMPT } from "../prompt";
 
-const DEFAULT_GROQ_MODELS = [
+export const DEFAULT_GROQ_MODELS = [
   "meta-llama/llama-4-scout-17b-16e-instruct",
   "meta-llama/llama-4-maverick-17b-128e-instruct",
   "qwen/qwen3.8-27b",

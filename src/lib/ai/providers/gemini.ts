@@ -1,7 +1,7 @@
 import { ParsedReceipt, ParsedReceiptSchema } from "../schema";
 import { RECEIPT_PARSE_SYSTEM_PROMPT } from "../prompt";
 
-const DEFAULT_GEMINI_MODELS = [
+export const DEFAULT_GEMINI_MODELS = [
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-flash-latest",

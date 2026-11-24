@@ -3,6 +3,7 @@ import { requireAuthUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getReceiptFilePath } from "@/lib/receipts/preprocess";
 import { renderPdfToImage } from "@/lib/receipts/pdf-extract";
+import { ensureFreshDiaTicketWebp } from "@/lib/integrations/dia/render-ticket";
 import fs from "fs";
 import path from "path";
 
@@ -94,9 +95,21 @@ export async function GET(
   }
 
   // Case 2: Visual image display (WebP)
+  await ensureFreshDiaTicketWebp(id).catch((err) =>
+    console.warn(`[FileRoute] DIA preview refresh failed for ${id}:`, err)
+  );
+
   if (fs.existsSync(companionWebpPath)) {
     try {
-      const webpBuffer = await fs.promises.readFile(companionWebpPath);
+      const [webpBuffer, stat] = await Promise.all([
+        fs.promises.readFile(companionWebpPath),
+        fs.promises.stat(companionWebpPath),
+      ]);
+      const etag = `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`;
+      const cacheControl = url.searchParams.has("v")
+        ? "private, max-age=86400, stale-while-revalidate=3600"
+        : "private, max-age=0, must-revalidate";
+
       return new NextResponse(new Uint8Array(webpBuffer), {
         status: 200,
         headers: {
@@ -104,7 +117,8 @@ export async function GET(
           "X-Content-Type-Options": "nosniff",
           "X-Has-Original-Pdf": hasOriginalPdf ? "true" : "false",
           "Content-Disposition": `inline; filename="${id}.webp"`,
-          "Cache-Control": "private, max-age=86400, stale-while-revalidate=3600",
+          ETag: etag,
+          "Cache-Control": cacheControl,
         },
       });
     } catch (webpErr) {

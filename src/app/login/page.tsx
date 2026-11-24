@@ -17,7 +17,13 @@ import {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/";
+  const rawCallbackUrl = searchParams.get("callbackUrl") || "/";
+  const callbackUrl =
+    rawCallbackUrl.startsWith("/") &&
+    !rawCallbackUrl.startsWith("//") &&
+    !rawCallbackUrl.startsWith("/\\")
+      ? rawCallbackUrl
+      : "/";
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
