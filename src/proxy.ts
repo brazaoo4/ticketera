@@ -20,7 +20,7 @@ export const proxy = auth((req) => {
   if (pathname === "/login") {
     if (isLoggedIn) {
       const callback = nextUrl.searchParams.get("callbackUrl");
-      if (callback && callback.startsWith("/")) {
+      if (callback && callback.startsWith("/") && !callback.startsWith("//") && !callback.startsWith("/\\")) {
         return NextResponse.redirect(new URL(callback, nextUrl.origin));
       }
       return NextResponse.redirect(new URL("/", nextUrl.origin));
