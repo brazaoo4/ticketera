@@ -1,18 +1,23 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   UserPlus,
+  KeyRound,
+  UserX,
+  UserCheck,
   Shield,
-  User,
-  Key,
-  Power,
+  User as UserIcon,
+  Search,
+  X,
   CheckCircle2,
   AlertCircle,
   Loader2,
-  X,
-  RefreshCw,
+  Eye,
+  EyeOff,
 } from "lucide-react";
+import { formatDate } from "@/lib/format";
 import {
   createUserAction,
   toggleUserStatusAction,
@@ -37,421 +42,598 @@ export function UserManagementClient({
   users: SerializedUser[];
   currentUserId: string;
 }) {
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [resetTargetUser, setResetTargetUser] = useState<SerializedUser | null>(
-    null
-  );
+  const router = useRouter();
+  const [searchQuery, setSearchQuery] = useState("");
 
-  // Create Form State
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createUsername, setCreateUsername] = useState("");
   const [createPassword, setCreatePassword] = useState("");
   const [createRole, setCreateRole] = useState<"USER" | "ADMIN">("USER");
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
-  // Reset Password State
-  const [newPassword, setNewPassword] = useState("");
-  const [resetError, setResetError] = useState<string | null>(null);
-  const [resetSuccess, setResetSuccess] = useState(false);
+  const [resetTarget, setResetTarget] = useState<SerializedUser | null>(null);
+  const [resetPasswordVal, setResetPasswordVal] = useState("");
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
-  // Toggle Status State
+  const [confirmToggleUserId, setConfirmToggleUserId] = useState<string | null>(
+    null
+  );
   const [togglingId, setTogglingId] = useState<string | null>(null);
-  const [actionNotice, setActionNotice] = useState<{
+
+  const [feedback, setFeedback] = useState<{
     type: "success" | "error";
-    message: string;
+    text: string;
   } | null>(null);
 
-  const generateRandomPassword = () => {
-    const chars =
-      "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
-    let pwd = "";
-    for (let i = 0; i < 12; i++) {
-      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return pwd;
-  };
+  const filteredUsers = users.filter((u) =>
+    searchQuery.trim()
+      ? u.username.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      : true
+  );
 
-  const handleCreateSubmit = async (e: React.FormEvent) => {
+  async function handleCreateSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setCreateError(null);
+    setFeedback(null);
+
+    if (createUsername.trim().length < 3) {
+      setFeedback({
+        type: "error",
+        text: "Username must be at least 3 characters.",
+      });
+      return;
+    }
+    if (createPassword.length < 8) {
+      setFeedback({
+        type: "error",
+        text: "Password must be at least 8 characters.",
+      });
+      return;
+    }
+
     setIsCreating(true);
+    try {
+      const fd = new FormData();
+      fd.append("username", createUsername.trim());
+      fd.append("password", createPassword);
+      fd.append("role", createRole);
+      const res = await createUserAction(fd);
 
-    const formData = new FormData();
-    formData.append("username", createUsername);
-    formData.append("password", createPassword);
-    formData.append("role", createRole);
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not create account.",
+        });
+        return;
+      }
 
-    const res = await createUserAction(formData);
-    setIsCreating(false);
-
-    if (res.success) {
+      setFeedback({
+        type: "success",
+        text: `Created account for ${createUsername.trim()}.`,
+      });
       setIsCreateOpen(false);
       setCreateUsername("");
       setCreatePassword("");
       setCreateRole("USER");
-      setActionNotice({
-        type: "success",
-        message: `User "${createUsername}" created successfully.`,
-      });
-      setTimeout(() => setActionNotice(null), 4000);
-    } else {
-      setCreateError(res.error || "Failed to create user.");
-    }
-  };
-
-  const handleToggleStatus = async (user: SerializedUser) => {
-    if (user.id === currentUserId) return;
-    setTogglingId(user.id);
-    setActionNotice(null);
-
-    const res = await toggleUserStatusAction(user.id);
-    setTogglingId(null);
-
-    if (res.success) {
-      setActionNotice({
-        type: "success",
-        message: `Status of "${user.username}" updated to: ${
-          res.enabled ? "Active" : "Disabled"
-        }.`,
-      });
-      setTimeout(() => setActionNotice(null), 4000);
-    } else {
-      setActionNotice({
+      router.refresh();
+    } catch {
+      setFeedback({
         type: "error",
-        message: res.error || "Could not update user status.",
+        text: "Could not create account right now.",
       });
+    } finally {
+      setIsCreating(false);
     }
-  };
+  }
 
-  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+  async function handleResetSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!resetTargetUser) return;
+    if (!resetTarget) return;
+    setFeedback(null);
 
-    setResetError(null);
-    setIsResetting(true);
-
-    const res = await resetPasswordAction(resetTargetUser.id, newPassword);
-    setIsResetting(false);
-
-    if (res.success) {
-      setResetSuccess(true);
-      setTimeout(() => {
-        setResetSuccess(false);
-        setResetTargetUser(null);
-        setNewPassword("");
-      }, 1500);
-    } else {
-      setResetError(res.error || "Failed to reset password.");
+    if (resetPasswordVal.length < 8) {
+      setFeedback({
+        type: "error",
+        text: "New password must be at least 8 characters.",
+      });
+      return;
     }
-  };
+
+    setIsResetting(true);
+    try {
+      const res = await resetPasswordAction(resetTarget.id, resetPasswordVal);
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not update password.",
+        });
+        return;
+      }
+      setFeedback({
+        type: "success",
+        text: `Password updated for ${resetTarget.username}.`,
+      });
+      setResetTarget(null);
+      setResetPasswordVal("");
+      router.refresh();
+    } catch {
+      setFeedback({
+        type: "error",
+        text: "Could not update password right now.",
+      });
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
+  async function handleToggleStatus(user: SerializedUser) {
+    setTogglingId(user.id);
+    setFeedback(null);
+    try {
+      const res = await toggleUserStatusAction(user.id);
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not change account status.",
+        });
+        return;
+      }
+      setConfirmToggleUserId(null);
+      setFeedback({
+        type: "success",
+        text: user.enabled
+          ? `Deactivated ${user.username}.`
+          : `Reactivated ${user.username}.`,
+      });
+      router.refresh();
+    } catch {
+      setFeedback({
+        type: "error",
+        text: "Could not change account status.",
+      });
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Action Notification Banner */}
-      {actionNotice && (
+    <div className="space-y-5">
+      {feedback && (
         <div
-          role="status"
-          className={`p-3.5 rounded-xl border flex items-center justify-between text-xs font-medium animate-in fade-in duration-150 ${
-            actionNotice.type === "success"
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-              : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+          role={feedback.type === "error" ? "alert" : "status"}
+          className={`rounded-2xl border px-4 py-3 flex items-center justify-between gap-3 text-[14px] ${
+            feedback.type === "error"
+              ? "border-[var(--negative)]/30 bg-[var(--negative-tint)] text-[var(--negative)]"
+              : "border-[var(--positive)]/30 bg-[var(--positive-tint)] text-[var(--positive)]"
           }`}
         >
-          <div className="flex items-center gap-2">
-            {actionNotice.type === "success" ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <div className="flex items-center gap-2.5">
+            {feedback.type === "error" ? (
+              <AlertCircle className="w-4 h-4 shrink-0" />
             ) : (
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
             )}
-            <span>{actionNotice.message}</span>
+            <span>{feedback.text}</span>
           </div>
           <button
-            onClick={() => setActionNotice(null)}
-            className="p-1 hover:opacity-80 transition-opacity"
-            aria-label="Dismiss notice"
+            type="button"
+            onClick={() => setFeedback(null)}
+            aria-label="Dismiss notification"
+            className="p-1 cursor-pointer"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* Top Controls Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
-            <span>System Users</span>
-            <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 text-xs tabular-nums font-mono border border-zinc-700/60">
-              {users.length}
-            </span>
-          </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Accounts authorized to upload receipts and access the platform.
-          </p>
+      {/* Search & Add CTA */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filter by username..."
+            className="w-full h-10 pl-10 pr-8 rounded-full bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              aria-label="Clear filter"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         <button
+          type="button"
           onClick={() => {
-            setCreatePassword(generateRandomPassword());
             setIsCreateOpen(true);
+            setFeedback(null);
           }}
-          className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-zinc-950 font-semibold text-xs shadow-md shadow-emerald-500/20 transition-all"
+          className="h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[14px] font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
         >
-          <UserPlus className="w-4 h-4 stroke-[2.2]" />
-          <span>Create User</span>
+          <UserPlus className="w-4 h-4 shrink-0" />
+          Add account
         </button>
       </div>
 
-      {/* Users Table Card */}
-      <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/60 shadow-xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-zinc-950/70 border-b border-zinc-800 text-zinc-400 font-mono uppercase text-[11px]">
-              <tr>
-                <th className="py-3 px-4">User</th>
-                <th className="py-3 px-4">Role</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Receipts Uploaded</th>
-                <th className="py-3 px-4">Created Date</th>
-                <th className="py-3 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/80">
-              {users.map((u) => {
-                const isCurrent = u.id === currentUserId;
-                const isToggling = togglingId === u.id;
+      {/* Desktop Users Table */}
+      <div className="hidden md:block rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+        <table className="w-full text-left border-collapse text-[14px]">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-[13px] text-[var(--text-muted)]">
+              <th className="py-3.5 px-5 font-medium">Account</th>
+              <th className="py-3.5 px-4 font-medium">Role</th>
+              <th className="py-3.5 px-4 font-medium">Status</th>
+              <th className="py-3.5 px-4 font-medium text-right">Receipts</th>
+              <th className="py-3.5 px-4 font-medium">Joined</th>
+              <th className="py-3.5 px-5 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+            {filteredUsers.map((user) => {
+              const isSelf = user.id === currentUserId;
+              const confirmingToggle = confirmToggleUserId === user.id;
 
-                return (
-                  <tr
-                    key={u.id}
-                    className="hover:bg-zinc-800/40 transition-colors"
-                  >
-                    {/* User */}
-                    <td className="py-3.5 px-4 font-medium text-zinc-200">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-300">
-                          {u.role === "ADMIN" ? (
-                            <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : (
-                            <User className="w-3.5 h-3.5 text-zinc-400" />
-                          )}
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="font-mono font-semibold">
-                            {u.username}
-                          </span>
-                          {isCurrent && (
-                            <span className="text-[10px] text-emerald-400">
-                              (Your current session)
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Role */}
-                    <td className="py-3.5 px-4">
-                      {u.role === "ADMIN" ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-mono text-[11px] font-medium">
-                          ADMIN
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 border border-zinc-700/60 font-mono text-[11px]">
-                          USER
+              return (
+                <React.Fragment key={user.id}>
+                  <tr className="hover:bg-[var(--bg-subtle)]/50 transition-colors">
+                    <td className="py-3.5 px-5 font-semibold text-[var(--text-primary)]">
+                      {user.username}
+                      {isSelf && (
+                        <span className="ml-2 text-[13px] font-normal text-[var(--text-muted)]">
+                          (You)
                         </span>
                       )}
                     </td>
-
-                    {/* Status */}
+                    <td className="py-3.5 px-4 text-[var(--text-primary)]">
+                      <span className="inline-flex items-center gap-1.5">
+                        {user.role === "ADMIN" ? (
+                          <Shield className="w-4 h-4 text-[var(--primary)]" />
+                        ) : (
+                          <UserIcon className="w-4 h-4 text-[var(--text-muted)]" />
+                        )}
+                        {user.role === "ADMIN" ? "Admin" : "Member"}
+                      </span>
+                    </td>
                     <td className="py-3.5 px-4">
-                      {u.enabled ? (
-                        <span className="inline-flex items-center gap-1.5 text-emerald-400 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                          <span>Active</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-rose-400 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-                          <span>Disabled</span>
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Receipts Count */}
-                    <td className="py-3.5 px-4 text-right tabular-nums font-mono text-zinc-300">
-                      {u._count.receipts}
-                    </td>
-
-                    {/* Created Date */}
-                    <td className="py-3.5 px-4 font-mono text-zinc-400 tabular-nums text-[11px]">
-                      {new Date(u.createdAt).toLocaleDateString("en-US", {
-                        year: "numeric",
-                        month: "short",
-                        day: "2-digit",
-                      })}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="py-3.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {/* Toggle Status */}
-                        <button
-                          onClick={() => handleToggleStatus(u)}
-                          disabled={isCurrent || isToggling}
-                          title={
-                            isCurrent
-                              ? "You cannot disable your own active account"
-                              : u.enabled
-                              ? "Disable account"
-                              : "Enable account"
-                          }
-                          className={`p-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
-                            u.enabled
-                              ? "border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
-                              : "border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-[13px] font-medium ${
+                          user.enabled
+                            ? "text-[var(--positive)]"
+                            : "text-[var(--negative)]"
+                        }`}
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            user.enabled
+                              ? "bg-[var(--positive)]"
+                              : "bg-[var(--negative)]"
                           }`}
+                        />
+                        {user.enabled ? "Active" : "Deactivated"}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 text-right tabular-nums text-[var(--text-primary)]">
+                      {user._count.receipts}
+                    </td>
+                    <td className="py-3.5 px-4 tabular-nums text-[13px] text-[var(--text-muted)]">
+                      {formatDate(user.createdAt)}
+                    </td>
+                    <td className="py-3.5 px-5 text-right">
+                      <div className="inline-flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetTarget(user);
+                            setResetPasswordVal("");
+                          }}
+                          className="h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
                         >
-                          {isToggling ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Power className="w-3.5 h-3.5" />
-                          )}
+                          <KeyRound className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                          Reset password
                         </button>
 
-                        {/* Reset Password */}
-                        <button
-                          onClick={() => {
-                            setResetTargetUser(u);
-                            setNewPassword(generateRandomPassword());
-                            setResetError(null);
-                          }}
-                          title="Reset password"
-                          className="p-1.5 rounded-lg border border-zinc-700/80 bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors"
-                        >
-                          <Key className="w-3.5 h-3.5" />
-                        </button>
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setConfirmToggleUserId(
+                                confirmingToggle ? null : user.id
+                              )
+                            }
+                            className={`h-8 px-3 rounded-full border text-[13px] font-medium inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                              user.enabled
+                                ? "border-[var(--border)] bg-[var(--bg-card)] text-[var(--negative)] hover:border-[var(--negative)]"
+                                : "border-[var(--positive)]/40 bg-[var(--positive-tint)] text-[var(--positive)]"
+                            }`}
+                          >
+                            {user.enabled ? (
+                              <>
+                                <UserX className="w-3.5 h-3.5" />
+                                Deactivate
+                              </>
+                            ) : (
+                              <>
+                                <UserCheck className="w-3.5 h-3.5" />
+                                Reactivate
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+
+                  {confirmingToggle && (
+                    <tr className="bg-[var(--bg-subtle)]/70">
+                      <td colSpan={6} className="px-5 py-3">
+                        <div className="flex items-center justify-between gap-3 text-[13px]">
+                          <span className="text-[var(--text-primary)]">
+                            {user.enabled
+                              ? `Deactivate ${user.username}? They won't be able to sign in until reactivated.`
+                              : `Reactivate ${user.username} so they can sign in again?`}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              disabled={togglingId === user.id}
+                              onClick={() => handleToggleStatus(user)}
+                              className="h-8 px-3.5 rounded-full bg-[var(--text-primary)] text-[var(--bg-page)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              {togglingId === user.id && (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              )}
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmToggleUserId(null)}
+                              className="h-8 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
-      {/* Modal 1: Create User Dialog */}
+      {/* P0 Fix: Mobile Stacked Account Cards (Zero Cramped Icon Columns) */}
+      <div className="md:hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] divide-y divide-[var(--border)] overflow-hidden">
+        {filteredUsers.map((user) => {
+          const isSelf = user.id === currentUserId;
+          const confirmingToggle = confirmToggleUserId === user.id;
+
+          return (
+            <div key={user.id} className="p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="font-semibold text-[15px] text-[var(--text-primary)] truncate">
+                    {user.username}
+                    {isSelf && (
+                      <span className="ml-1.5 text-[13px] font-normal text-[var(--text-muted)]">
+                        (You)
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                    {user.role === "ADMIN" ? "Admin" : "Member"} ·{" "}
+                    {user._count.receipts}{" "}
+                    {user._count.receipts === 1 ? "receipt" : "receipts"} ·{" "}
+                    {formatDate(user.createdAt)}
+                  </div>
+                </div>
+
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[13px] font-medium shrink-0 ${
+                    user.enabled
+                      ? "text-[var(--positive)]"
+                      : "text-[var(--negative)]"
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      user.enabled
+                        ? "bg-[var(--positive)]"
+                        : "bg-[var(--negative)]"
+                    }`}
+                  />
+                  {user.enabled ? "Active" : "Deactivated"}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetTarget(user);
+                    setResetPasswordVal("");
+                  }}
+                  className="h-9 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                  Reset password
+                </button>
+
+                {!isSelf && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setConfirmToggleUserId(confirmingToggle ? null : user.id)
+                    }
+                    className={`h-9 px-3.5 rounded-full border text-[13px] font-medium inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                      user.enabled
+                        ? "border-[var(--border)] bg-[var(--bg-card)] text-[var(--negative)]"
+                        : "border-[var(--positive)]/40 bg-[var(--positive-tint)] text-[var(--positive)]"
+                    }`}
+                  >
+                    {user.enabled ? (
+                      <>
+                        <UserX className="w-3.5 h-3.5" />
+                        Deactivate
+                      </>
+                    ) : (
+                      <>
+                        <UserCheck className="w-3.5 h-3.5" />
+                        Reactivate
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {confirmingToggle && (
+                <div className="rounded-xl bg-[var(--bg-subtle)] p-3 space-y-2.5 text-[13px]">
+                  <p className="text-[var(--text-primary)]">
+                    {user.enabled
+                      ? `Deactivate ${user.username}?`
+                      : `Reactivate ${user.username}?`}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={togglingId === user.id}
+                      onClick={() => handleToggleStatus(user)}
+                      className="h-8 px-3.5 rounded-full bg-[var(--text-primary)] text-[var(--bg-page)] text-[13px] font-semibold cursor-pointer"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmToggleUserId(null)}
+                      className="h-8 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Create User Modal */}
       {isCreateOpen && (
         <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="create-user-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-150"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setIsCreateOpen(false);
-          }}
+          aria-label="Add household account"
         >
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <div className="flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-emerald-400" />
-                <h3
-                  id="create-user-title"
-                  className="text-base font-semibold text-zinc-100"
-                >
-                  New User
-                </h3>
-              </div>
+          <div
+            className="fixed inset-0 bg-[var(--scrim)] backdrop-blur-[2px]"
+            onClick={() => setIsCreateOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-semibold text-[20px] text-[var(--text-primary)]">
+                Add household account
+              </h2>
               <button
+                type="button"
                 onClick={() => setIsCreateOpen(false)}
-                className="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                aria-label="Close"
+                className="w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {createError && (
-              <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <div>{createError}</div>
-              </div>
-            )}
-
-            <form onSubmit={handleCreateSubmit} className="space-y-4 text-xs">
-              <div className="space-y-1">
-                <label className="font-mono text-zinc-300">
-                  USERNAME
+            <form onSubmit={handleCreateSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[13px] font-medium text-[var(--text-primary)]">
+                  Username
                 </label>
                 <input
                   type="text"
                   required
                   value={createUsername}
                   onChange={(e) => setCreateUsername(e.target.value)}
-                  placeholder="e.g. nuno, maria"
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  placeholder="e.g. lucia"
+                  className="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
                 />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="font-mono text-zinc-300">PASSWORD</label>
-                  <button
-                    type="button"
-                    onClick={() => setCreatePassword(generateRandomPassword())}
-                    className="text-[10px] text-emerald-400 hover:underline flex items-center gap-1 font-mono"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Generate random</span>
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  required
-                  value={createPassword}
-                  onChange={(e) => setCreatePassword(e.target.value)}
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                />
-                <p className="text-[10px] text-zinc-500 font-mono">
-                  Minimum 6 characters. Share this password with the user.
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  3 to 32 characters (letters, numbers, dot, underscore or
+                  dash).
                 </p>
               </div>
 
-              <div className="space-y-1">
-                <label className="font-mono text-zinc-300">
-                  SYSTEM ROLE
+              <div className="space-y-1.5">
+                <label className="block text-[13px] font-medium text-[var(--text-primary)]">
+                  Temporary password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showCreatePassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    value={createPassword}
+                    onChange={(e) => setCreatePassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="w-full h-10 pl-3.5 pr-12 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCreatePassword((v) => !v)}
+                    aria-label={
+                      showCreatePassword ? "Hide password" : "Show password"
+                    }
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[var(--text-muted)] cursor-pointer"
+                  >
+                    {showCreatePassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[13px] font-medium text-[var(--text-primary)]">
+                  Role
                 </label>
                 <select
                   value={createRole}
                   onChange={(e) =>
                     setCreateRole(e.target.value as "USER" | "ADMIN")
                   }
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                  className="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
                 >
-                  <option value="USER">USER (Upload and review receipts)</option>
-                  <option value="ADMIN">
-                    ADMIN (Full access and user management)
-                  </option>
+                  <option value="USER">Member — upload and review receipts</option>
+                  <option value="ADMIN">Admin — full household settings</option>
                 </select>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsCreateOpen(false)}
-                  className="px-3.5 py-2 rounded-xl border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-xs font-medium"
+                  className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isCreating}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs shadow-md shadow-emerald-500/20 disabled:opacity-50"
+                  className="h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
                 >
-                  {isCreating ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <span>Save User</span>
-                  )}
+                  {isCreating && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Create account
                 </button>
               </div>
             </form>
@@ -459,102 +641,84 @@ export function UserManagementClient({
         </div>
       )}
 
-      {/* Modal 2: Reset Password Dialog */}
-      {resetTargetUser && (
+      {/* Reset Password Modal */}
+      {resetTarget && (
         <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="reset-password-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-150"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setResetTargetUser(null);
-          }}
+          aria-label={`Reset password for ${resetTarget.username}`}
         >
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl p-6 space-y-5 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Key className="w-5 h-5 text-emerald-400" />
-                <h3
-                  id="reset-password-title"
-                  className="text-base font-semibold text-zinc-100"
-                >
-                  Reset Password
-                </h3>
-              </div>
+          <div
+            className="fixed inset-0 bg-[var(--scrim)] backdrop-blur-[2px]"
+            onClick={() => setResetTarget(null)}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-semibold text-[20px] text-[var(--text-primary)]">
+                Reset password for {resetTarget.username}
+              </h2>
               <button
-                onClick={() => setResetTargetUser(null)}
-                className="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                type="button"
+                onClick={() => setResetTarget(null)}
+                aria-label="Close"
+                className="w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-zinc-400">
-              Setting a new password for user:{" "}
-              <strong className="text-zinc-200 font-mono">
-                {resetTargetUser.username}
-              </strong>
-            </p>
-
-            {resetSuccess && (
-              <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <div>Password reset successfully!</div>
-              </div>
-            )}
-
-            {resetError && (
-              <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <div>{resetError}</div>
-              </div>
-            )}
-
-            <form
-              onSubmit={handleResetPasswordSubmit}
-              className="space-y-4 text-xs"
-            >
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="font-mono text-zinc-300">
-                    NEW PASSWORD
-                  </label>
+            <form onSubmit={handleResetSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[13px] font-medium text-[var(--text-primary)]">
+                  New password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showResetPassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    autoFocus
+                    value={resetPasswordVal}
+                    onChange={(e) => setResetPasswordVal(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="w-full h-10 pl-3.5 pr-12 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
+                  />
                   <button
                     type="button"
-                    onClick={() => setNewPassword(generateRandomPassword())}
-                    className="text-[10px] text-emerald-400 hover:underline flex items-center gap-1 font-mono"
+                    onClick={() => setShowResetPassword((v) => !v)}
+                    aria-label={
+                      showResetPassword ? "Hide password" : "Show password"
+                    }
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[var(--text-muted)] cursor-pointer"
                   >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Generate random</span>
+                    {showResetPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
                   </button>
                 </div>
-                <input
-                  type="text"
-                  required
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
-                />
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  Minimum 8 characters required.
+                </p>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setResetTargetUser(null)}
-                  className="px-3.5 py-2 rounded-xl border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-xs font-medium"
+                  onClick={() => setResetTarget(null)}
+                  className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isResetting}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs shadow-md shadow-emerald-500/20 disabled:opacity-50"
+                  className="h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
                 >
-                  {isResetting ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <span>Update Password</span>
-                  )}
+                  {isResetting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Save new password
                 </button>
               </div>
             </form>

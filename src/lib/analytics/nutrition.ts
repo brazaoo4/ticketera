@@ -130,27 +130,32 @@ export function getNutriScoreBadgeStyle(grade: string | null | undefined): {
     case "a":
       return {
         letter: "A",
-        className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
+        className:
+          "bg-[var(--ns-a-bg)] text-[var(--ns-a-fg)] border-[var(--ns-a-bd)]",
       };
     case "b":
       return {
         letter: "B",
-        className: "bg-lime-500/15 text-lime-300 border-lime-500/40",
+        className:
+          "bg-[var(--ns-b-bg)] text-[var(--ns-b-fg)] border-[var(--ns-b-bd)]",
       };
     case "c":
       return {
         letter: "C",
-        className: "bg-amber-500/15 text-amber-300 border-amber-500/40",
+        className:
+          "bg-[var(--ns-c-bg)] text-[var(--ns-c-fg)] border-[var(--ns-c-bd)]",
       };
     case "d":
       return {
         letter: "D",
-        className: "bg-orange-500/15 text-orange-300 border-orange-500/40",
+        className:
+          "bg-[var(--ns-d-bg)] text-[var(--ns-d-fg)] border-[var(--ns-d-bd)]",
       };
     case "e":
       return {
         letter: "E",
-        className: "bg-rose-500/15 text-rose-300 border-rose-500/40",
+        className:
+          "bg-[var(--ns-e-bg)] text-[var(--ns-e-fg)] border-[var(--ns-e-bd)]",
       };
     default:
       return null;
@@ -168,34 +173,38 @@ export function getNovaGroupMeta(novaGroup: number | null | undefined): {
     case 1:
       return {
         group: 1,
-        label: "NOVA 1 · Unprocessed / Minimally Processed",
+        label: "NOVA 1 · Unprocessed or minimally processed",
         shortLabel: "NOVA 1",
-        className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-        barColor: "#10b981",
+        className:
+          "bg-[var(--ns-a-bg)] text-[var(--ns-a-fg)] border-[var(--ns-a-bd)]",
+        barColor: "#15803D",
       };
     case 2:
       return {
         group: 2,
-        label: "NOVA 2 · Culinary Ingredients",
+        label: "NOVA 2 · Culinary ingredients",
         shortLabel: "NOVA 2",
-        className: "bg-sky-500/15 text-sky-300 border-sky-500/30",
-        barColor: "#0ea5e9",
+        className:
+          "bg-[var(--nova-2-bg)] text-[var(--nova-2-fg)] border-[var(--nova-2-bd)]",
+        barColor: "#0284C7",
       };
     case 3:
       return {
         group: 3,
-        label: "NOVA 3 · Processed Foods",
+        label: "NOVA 3 · Processed foods",
         shortLabel: "NOVA 3",
-        className: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-        barColor: "#f59e0b",
+        className:
+          "bg-[var(--ns-c-bg)] text-[var(--ns-c-fg)] border-[var(--ns-c-bd)]",
+        barColor: "#D97706",
       };
     case 4:
       return {
         group: 4,
-        label: "NOVA 4 · Ultra-Processed",
+        label: "NOVA 4 · Ultra-processed",
         shortLabel: "NOVA 4",
-        className: "bg-rose-500/15 text-rose-300 border-rose-500/30",
-        barColor: "#f43f5e",
+        className:
+          "bg-[var(--ns-e-bg)] text-[var(--ns-e-fg)] border-[var(--ns-e-bd)]",
+        barColor: "#C2410C",
       };
     default:
       return null;

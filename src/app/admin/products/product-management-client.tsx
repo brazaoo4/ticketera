@@ -9,17 +9,17 @@ import {
   Pencil,
   GitMerge,
   Trash2,
-  Sparkles,
-  ArrowRight,
   X,
-  Check,
+  CheckCircle2,
   AlertCircle,
   AlertTriangle,
   Loader2,
+  Wand2,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
 import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
+import { normalizeUnit } from "@/lib/format";
 import {
   toggleProductStapleAction,
   updateProductAction,
@@ -58,24 +58,21 @@ export function ProductManagementClient({
   const [products, setProducts] = useState<ManagedProduct[]>(initialProducts);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
-  const [stapleFilter, setStapleFilter] = useState<"all" | "staple" | "non-staple">("all");
+  const [stapleFilter, setStapleFilter] = useState<
+    "all" | "staple" | "non-staple"
+  >("all");
 
-  // Feedback states
-  const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [isHealing, setIsHealing] = useState(false);
-
-  // Suggested duplicate clusters & one-click merge state
+  // Suggested duplicate clusters & bulk merge state
   const [duplicatesExpanded, setDuplicatesExpanded] = useState(true);
-  const [survivorOverrides, setSurvivorOverrides] = useState<Record<string, string>>({});
+  const [survivorOverrides, setSurvivorOverrides] = useState<
+    Record<string, string>
+  >({});
   const [mergingGroupKey, setMergingGroupKey] = useState<string | null>(null);
-
-  // Multi-select bulk merge state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTargetId, setBulkTargetId] = useState<string>("");
   const [isBulkMerging, setIsBulkMerging] = useState(false);
 
-  // Edit Modal State
-  const [editingProduct, setEditingProduct] = useState<ManagedProduct | null>(null);
+  const [editTarget, setEditTarget] = useState<ManagedProduct | null>(null);
   const [editName, setEditName] = useState("");
   const [editCategory, setEditCategory] = useState("Other");
   const [editBaseUnit, setEditBaseUnit] = useState<"KG" | "L" | "UNIT">("UNIT");
@@ -87,52 +84,68 @@ export function ProductManagementClient({
   const [editEan, setEditEan] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  // Merge Modal State (native <dialog>)
-  const [mergingSource, setMergingSource] = useState<ManagedProduct | null>(null);
-  const [mergeTargetQuery, setMergeTargetQuery] = useState("");
+  const [mergeSource, setMergeSource] = useState<ManagedProduct | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState<string>("");
+  const [mergeSearch, setMergeSearch] = useState("");
   const [isMerging, setIsMerging] = useState(false);
-  const mergeDialogRef = useRef<HTMLDialogElement>(null);
-  const mergeTitleId = useId();
+
   const editDialogRef = useRef<HTMLDialogElement>(null);
   const editTitleId = useId();
+  const mergeDialogRef = useRef<HTMLDialogElement>(null);
+  const mergeTitleId = useId();
 
-  useNativeDialog(mergeDialogRef, Boolean(mergingSource), () => setMergingSource(null));
-  useNativeDialog(editDialogRef, Boolean(editingProduct), () => setEditingProduct(null));
+  useNativeDialog(editDialogRef, Boolean(editTarget), () =>
+    setEditTarget(null)
+  );
+  useNativeDialog(mergeDialogRef, Boolean(mergeSource), () =>
+    setMergeSource(null)
+  );
 
-  // Delete State
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingStapleId, setTogglingStapleId] = useState<string | null>(null);
 
-  // Compute duplicate clusters dynamically from active product catalogue
+  const [showHealConfirm, setShowHealConfirm] = useState(false);
+  const [isHealing, setIsHealing] = useState(false);
+
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
   const duplicateGroups = useMemo(
     () => findDuplicateProductGroups(products),
     [products]
   );
 
-  // Filter products
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchName = p.displayName.toLowerCase().includes(q);
-        const matchSlug = p.slug.toLowerCase().includes(q);
-        const matchCat = p.category.toLowerCase().includes(q);
-        const matchEan = (p.ean || "").toLowerCase().includes(q);
-        if (!matchName && !matchSlug && !matchCat && !matchEan) return false;
-      }
+  const categories = useMemo(() => {
+    const set = new Set<string>(CANONICAL_CATEGORIES);
+    products.forEach((p) => {
+      if (p.category) set.add(p.category);
+    });
+    return ["All", ...Array.from(set).sort()];
+  }, [products]);
 
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return products.filter((p) => {
       if (categoryFilter !== "All" && p.category !== categoryFilter) {
         return false;
       }
-
       if (stapleFilter === "staple" && !p.isStaple) return false;
       if (stapleFilter === "non-staple" && p.isStaple) return false;
-
+      if (
+        q &&
+        !p.displayName.toLowerCase().includes(q) &&
+        !p.category.toLowerCase().includes(q) &&
+        !(p.ean || "").toLowerCase().includes(q)
+      ) {
+        return false;
+      }
       return true;
     });
   }, [products, searchQuery, categoryFilter, stapleFilter]);
 
-  // Selected products for bulk merge
   const selectedProducts = useMemo(() => {
     return products
       .filter((p) => selectedIds.has(p.id))
@@ -145,23 +158,20 @@ export function ProductManagementClient({
     return selectedProducts[0].id;
   }, [selectedProducts, bulkTargetId]);
 
-  // Merge target candidates ranked by name similarity to mergingSource
   const mergeCandidates = useMemo(() => {
-    if (!mergingSource) return [];
-    const q = mergeTargetQuery.toLowerCase().trim();
+    if (!mergeSource) return [];
+    const q = mergeSearch.trim().toLowerCase();
     return products
-      .filter((p) => p.id !== mergingSource.id)
-      .filter((p) => {
-        if (!q) return true;
-        return (
-          p.displayName.toLowerCase().includes(q) ||
-          p.slug.toLowerCase().includes(q) ||
-          p.category.toLowerCase().includes(q)
-        );
-      })
+      .filter((p) => p.id !== mergeSource.id)
+      .filter((p) =>
+        q
+          ? p.displayName.toLowerCase().includes(q) ||
+            p.category.toLowerCase().includes(q)
+          : true
+      )
       .map((p) => ({
         product: p,
-        similarity: computeNameSimilarity(mergingSource.displayName, p.displayName),
+        similarity: computeNameSimilarity(mergeSource.displayName, p.displayName),
       }))
       .sort((a, b) => {
         if (Math.abs(b.similarity - a.similarity) > 0.05) {
@@ -169,20 +179,25 @@ export function ProductManagementClient({
         }
         return b.product.sightingsCount - a.product.sightingsCount;
       })
-      .slice(0, 12);
-  }, [products, mergingSource, mergeTargetQuery]);
+      .slice(0, 24);
+  }, [products, mergeSource, mergeSearch]);
 
   const selectedMergeTarget = useMemo(
     () => products.find((p) => p.id === mergeTargetId) || null,
     [products, mergeTargetId]
   );
 
-  // Unified client state reconciliation after merging `sourceIds` into `targetId`
-  const applyMergedState = (sourceIds: string[], targetId: string) => {
+  function applyMergedState(sourceIds: string[], targetId: string) {
     const sourceSet = new Set(sourceIds);
     const mergedSources = products.filter((p) => sourceSet.has(p.id));
-    const addedSightings = mergedSources.reduce((sum, s) => sum + s.sightingsCount, 0);
-    const addedAliases = mergedSources.reduce((sum, s) => sum + s.aliasesCount, 0);
+    const addedSightings = mergedSources.reduce(
+      (sum, s) => sum + s.sightingsCount,
+      0
+    );
+    const addedAliases = mergedSources.reduce(
+      (sum, s) => sum + s.aliasesCount,
+      0
+    );
     const anyStaple = mergedSources.some((s) => s.isStaple);
 
     setProducts((prev) =>
@@ -205,52 +220,80 @@ export function ProductManagementClient({
       next.delete(targetId);
       return next;
     });
-  };
+  }
 
-  // 1-Tap Staple Toggle
-  const handleToggleStaple = async (productId: string, currentVal: boolean) => {
-    const nextVal = !currentVal;
+  function toggleSelectRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleToggleStaple(product: ManagedProduct) {
+    const nextVal = !product.isStaple;
+    setTogglingStapleId(product.id);
+    setFeedback(null);
     setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, isStaple: nextVal } : p))
+      prev.map((p) => (p.id === product.id ? { ...p, isStaple: nextVal } : p))
     );
 
-    const res = await toggleProductStapleAction(productId, nextVal);
-    if (!res.success) {
+    try {
+      const res = await toggleProductStapleAction(product.id, nextVal);
+      if (!res.success) {
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === product.id ? { ...p, isStaple: !nextVal } : p
+          )
+        );
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not update staple setting.",
+        });
+      } else {
+        router.refresh();
+      }
+    } catch {
       setProducts((prev) =>
-        prev.map((p) => (p.id === productId ? { ...p, isStaple: currentVal } : p))
+        prev.map((p) =>
+          p.id === product.id ? { ...p, isStaple: !nextVal } : p
+        )
       );
-      setFeedback({ type: "error", message: res.error || "Failed to toggle staple." });
+      setFeedback({
+        type: "error",
+        text: "Could not update staple setting.",
+      });
+    } finally {
+      setTogglingStapleId(null);
     }
-  };
+  }
 
-  // Open Edit Modal
-  const openEditModal = (p: ManagedProduct) => {
-    setEditingProduct(p);
-    setEditName(p.displayName);
-    setEditCategory(p.category);
-    setEditBaseUnit(p.baseUnit);
-    setEditIsStaple(p.isStaple);
-    setEditNutriScore(p.nutriScore || "");
-    setEditNovaGroup(p.novaGroup ? String(p.novaGroup) : "");
+  function openEditModal(product: ManagedProduct) {
+    setEditTarget(product);
+    setEditName(product.displayName);
+    setEditCategory(product.category || "Other");
+    setEditBaseUnit(product.baseUnit);
+    setEditIsStaple(product.isStaple);
+    setEditNutriScore(product.nutriScore || "");
+    setEditNovaGroup(product.novaGroup ? String(product.novaGroup) : "");
     setEditProtein(
-      p.proteinPer100g !== null && p.proteinPer100g !== undefined
-        ? String(p.proteinPer100g)
+      product.proteinPer100g !== null && product.proteinPer100g !== undefined
+        ? String(product.proteinPer100g)
         : ""
     );
     setEditKcal(
-      p.kcalPer100g !== null && p.kcalPer100g !== undefined
-        ? String(p.kcalPer100g)
+      product.kcalPer100g !== null && product.kcalPer100g !== undefined
+        ? String(product.kcalPer100g)
         : ""
     );
-    setEditEan(p.ean || "");
-  };
-
-  // Save Edit
-  const handleSaveEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingProduct) return;
-    setIsSavingEdit(true);
+    setEditEan(product.ean || "");
     setFeedback(null);
+  }
+
+  async function handleSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTarget || !editName.trim()) return;
 
     const parsedNutri =
       editNutriScore === "a" ||
@@ -278,22 +321,31 @@ export function ProductManagementClient({
         : null;
     const cleanEan = editEan.trim() || null;
 
-    const res = await updateProductAction(editingProduct.id, {
-      displayName: editName,
-      category: editCategory,
-      baseUnit: editBaseUnit,
-      isStaple: editIsStaple,
-      nutriScore: parsedNutri,
-      novaGroup: parsedNova,
-      proteinPer100g: parsedProtein,
-      kcalPer100g: parsedKcal,
-      ean: cleanEan,
-    });
+    setIsSavingEdit(true);
+    setFeedback(null);
+    try {
+      const res = await updateProductAction(editTarget.id, {
+        displayName: editName.trim(),
+        category: editCategory,
+        baseUnit: editBaseUnit,
+        isStaple: editIsStaple,
+        nutriScore: parsedNutri,
+        novaGroup: parsedNova,
+        proteinPer100g: parsedProtein,
+        kcalPer100g: parsedKcal,
+        ean: cleanEan,
+      });
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not save product changes.",
+        });
+        return;
+      }
 
-    if (res.success) {
       setProducts((prev) =>
         prev.map((p) =>
-          p.id === editingProduct.id
+          p.id === editTarget.id
             ? {
                 ...p,
                 displayName: editName.trim(),
@@ -309,21 +361,27 @@ export function ProductManagementClient({
             : p
         )
       );
-      setEditingProduct(null);
-      setFeedback({ type: "success", message: `Updated "${editName.trim()}" successfully.` });
+      setFeedback({
+        type: "success",
+        text: `Updated ${editName.trim()}.`,
+      });
+      setEditTarget(null);
       router.refresh();
-    } else {
-      setFeedback({ type: "error", message: res.error || "Failed to update product." });
+    } catch {
+      setFeedback({
+        type: "error",
+        text: "Could not save product changes.",
+      });
+    } finally {
+      setIsSavingEdit(false);
     }
-    setIsSavingEdit(false);
-  };
+  }
 
-  // One-Click Suggested Duplicate Cluster Merge
-  const handleMergeDuplicateGroup = async (
+  async function handleMergeDuplicateGroup(
     groupKey: string,
     clusterProducts: ManagedProduct[],
     survivorId: string
-  ) => {
+  ) {
     const sourceIds = clusterProducts
       .filter((p) => p.id !== survivorId)
       .map((p) => p.id);
@@ -331,23 +389,32 @@ export function ProductManagementClient({
 
     setMergingGroupKey(groupKey);
     setFeedback(null);
-
-    const res = await mergeProductsBatchAction(sourceIds, survivorId);
-    if (res.success) {
-      applyMergedState(sourceIds, survivorId);
+    try {
+      const res = await mergeProductsBatchAction(sourceIds, survivorId);
+      if (res.success) {
+        applyMergedState(sourceIds, survivorId);
+        setFeedback({
+          type: "success",
+          text: res.message || "Merged duplicate products.",
+        });
+        router.refresh();
+      } else {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not merge duplicate products.",
+        });
+      }
+    } catch {
       setFeedback({
-        type: "success",
-        message: res.message || "Merged duplicate products successfully.",
+        type: "error",
+        text: "Could not merge duplicate products right now.",
       });
-      router.refresh();
-    } else {
-      setFeedback({ type: "error", message: res.error || "Failed to merge duplicates." });
+    } finally {
+      setMergingGroupKey(null);
     }
-    setMergingGroupKey(null);
-  };
+  }
 
-  // Multi-select Bulk Merge
-  const handleBulkMerge = async () => {
+  async function handleBulkMerge() {
     if (selectedProducts.length < 2 || !effectiveBulkTargetId) return;
     const sourceIds = selectedProducts
       .filter((p) => p.id !== effectiveBulkTargetId)
@@ -356,151 +423,205 @@ export function ProductManagementClient({
 
     setIsBulkMerging(true);
     setFeedback(null);
-
-    const res = await mergeProductsBatchAction(sourceIds, effectiveBulkTargetId);
-    if (res.success) {
-      applyMergedState(sourceIds, effectiveBulkTargetId);
+    try {
+      const res = await mergeProductsBatchAction(
+        sourceIds,
+        effectiveBulkTargetId
+      );
+      if (res.success) {
+        applyMergedState(sourceIds, effectiveBulkTargetId);
+        setFeedback({
+          type: "success",
+          text: res.message || "Merged selected products.",
+        });
+        router.refresh();
+      } else {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not merge selected products.",
+        });
+      }
+    } catch {
       setFeedback({
-        type: "success",
-        message: res.message || "Merged selected products successfully.",
+        type: "error",
+        text: "Could not merge selected products right now.",
       });
-      router.refresh();
-    } else {
-      setFeedback({ type: "error", message: res.error || "Bulk merge failed." });
+    } finally {
+      setIsBulkMerging(false);
     }
-    setIsBulkMerging(false);
-  };
+  }
 
-  // Open Single-Row Merge Modal
-  const openMergeModal = (source: ManagedProduct) => {
-    setMergingSource(source);
-    setMergeTargetQuery("");
-    setMergeTargetId("");
-  };
-
-  // Execute Single-Row Merge
-  const handleExecuteMerge = async (e: React.FormEvent) => {
+  async function handleConfirmMerge(e: React.FormEvent) {
     e.preventDefault();
-    if (!mergingSource || !mergeTargetId) return;
+    if (!mergeSource || !mergeTargetId) return;
+
     setIsMerging(true);
     setFeedback(null);
+    try {
+      const res = await mergeProductsBatchAction([mergeSource.id], mergeTargetId);
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not merge products.",
+        });
+        return;
+      }
 
-    const targetProduct = products.find((p) => p.id === mergeTargetId);
-    const res = await mergeProductsBatchAction([mergingSource.id], mergeTargetId);
-
-    if (res.success) {
-      applyMergedState([mergingSource.id], mergeTargetId);
-      setMergingSource(null);
+      const targetProd = products.find((p) => p.id === mergeTargetId);
+      applyMergedState([mergeSource.id], mergeTargetId);
       setFeedback({
         type: "success",
-        message:
+        text:
           res.message ||
-          `Merged "${mergingSource.displayName}" into "${targetProduct?.displayName}".`,
+          `Merged "${mergeSource.displayName}" into "${
+            targetProd?.displayName || "selected product"
+          }".`,
+      });
+      setMergeSource(null);
+      setMergeTargetId("");
+      setMergeSearch("");
+      router.refresh();
+    } catch {
+      setFeedback({
+        type: "error",
+        text: "Could not merge products right now.",
+      });
+    } finally {
+      setIsMerging(false);
+    }
+  }
+
+  async function handleConfirmDelete(product: ManagedProduct) {
+    setDeletingId(product.id);
+    setFeedback(null);
+    try {
+      const res = await deleteProductAction(product.id);
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not delete this product.",
+        });
+        return;
+      }
+      setProducts((prev) => prev.filter((p) => p.id !== product.id));
+      setConfirmDeleteId(null);
+      setFeedback({
+        type: "success",
+        text: `Removed "${product.displayName}" from the catalogue.`,
       });
       router.refresh();
-    } else {
-      setFeedback({ type: "error", message: res.error || "Failed to merge products." });
+    } catch {
+      setFeedback({
+        type: "error",
+        text: "Could not delete this product right now.",
+      });
+    } finally {
+      setDeletingId(null);
     }
-    setIsMerging(false);
-  };
+  }
 
-  // Delete product
-  const handleDeleteProduct = async (productId: string) => {
-    setDeletingId(productId);
-    const res = await deleteProductAction(productId);
-    if (res.success) {
-      setProducts((prev) => prev.filter((p) => p.id !== productId));
-      setFeedback({ type: "success", message: "Product deleted successfully." });
-    } else {
-      setFeedback({ type: "error", message: res.error || "Could not delete product." });
-    }
-    setDeletingId(null);
-  };
-
-  // Auto-Heal Legacy Products
-  const handleAutoHeal = async () => {
-    if (!confirm("Run catalogue auto-healer? This will correct legacy UNIT mismatches on meat, produce, and liquids, and automatically flag staple groceries.")) {
-      return;
-    }
+  async function handleRunCleanUp() {
     setIsHealing(true);
     setFeedback(null);
-
-    const res = await autoHealLegacyProductsAction();
-    if (res.success) {
-      setFeedback({ type: "success", message: res.message || "Catalogue healed successfully!" });
-      setTimeout(() => window.location.reload(), 1500);
-    } else {
-      setFeedback({ type: "error", message: res.error || "Failed to heal catalogue." });
+    try {
+      const res = await autoHealLegacyProductsAction();
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not run catalogue clean-up.",
+        });
+        return;
+      }
+      setShowHealConfirm(false);
+      setFeedback({
+        type: "success",
+        text:
+          ("message" in res && res.message) ||
+          "Updated pack units and staple tags across your grocery catalogue.",
+      });
+      router.refresh();
+    } catch {
+      setFeedback({
+        type: "error",
+        text: "Could not run catalogue clean-up.",
+      });
+    } finally {
+      setIsHealing(false);
     }
-    setIsHealing(false);
-  };
-
-  const toggleSelectRow = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Global Alert Notification */}
+    <div className="space-y-5">
       {feedback && (
         <div
-          className={`p-4 rounded-2xl border text-xs flex items-center justify-between gap-3 ${
-            feedback.type === "success"
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-              : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+          role={feedback.type === "error" ? "alert" : "status"}
+          className={`rounded-2xl border px-4 py-3 flex items-center justify-between gap-3 text-[14px] ${
+            feedback.type === "error"
+              ? "border-[var(--negative)]/30 bg-[var(--negative-tint)] text-[var(--negative)]"
+              : "border-[var(--positive)]/30 bg-[var(--positive-tint)] text-[var(--positive)]"
           }`}
         >
-          <div className="flex items-center gap-2">
-            {feedback.type === "success" ? <Check className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-            <span>{feedback.message}</span>
+          <div className="flex items-center gap-2.5">
+            {feedback.type === "error" ? (
+              <AlertCircle className="w-4 h-4 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            )}
+            <span>{feedback.text}</span>
           </div>
           <button
             type="button"
             onClick={() => setFeedback(null)}
-            className="text-zinc-400 hover:text-white whitespace-nowrap shrink-0"
+            aria-label="Dismiss notification"
+            className="p-1 cursor-pointer"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* One-Click Suggested Duplicate Clusters */}
+      {/* Suggested Duplicate Products (One-Click Cluster Merge) */}
       {duplicateGroups.length > 0 && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+        <section className="rounded-2xl border border-[var(--accent)]/35 bg-[var(--accent-tint)]/55 overflow-hidden">
           <button
             type="button"
             onClick={() => setDuplicatesExpanded((prev) => !prev)}
-            className="w-full flex items-center justify-between px-5 py-3.5 bg-amber-500/10 hover:bg-amber-500/15 text-amber-200 text-xs font-bold font-mono transition-colors"
+            className="w-full px-5 py-3.5 flex items-center justify-between gap-3 text-left hover:bg-[var(--accent-tint)] transition-colors cursor-pointer"
           >
-            <div className="flex items-center gap-2">
-              <GitMerge className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>SUGGESTED DUPLICATE PRODUCTS</span>
-              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200 text-[11px] whitespace-nowrap shrink-0 tabular-nums">
-                {duplicateGroups.length} {duplicateGroups.length === 1 ? "cluster" : "clusters"}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <GitMerge className="w-4 h-4 text-[var(--accent)] shrink-0" />
+              <span className="font-display font-semibold text-[15px] text-[var(--text-primary)]">
+                Possible duplicate groceries
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full bg-[var(--bg-card)] border border-[var(--border)] text-[13px] font-medium text-[var(--text-primary)] tabular-nums whitespace-nowrap shrink-0">
+                {duplicateGroups.length}{" "}
+                {duplicateGroups.length === 1 ? "group" : "groups"}
               </span>
             </div>
-            <div className="flex items-center gap-1.5 text-[11px] text-amber-300/80 whitespace-nowrap shrink-0">
+            <div className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--text-muted)] whitespace-nowrap shrink-0">
               <span>{duplicatesExpanded ? "Hide" : "Review"}</span>
-              {duplicatesExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              {duplicatesExpanded ? (
+                <ChevronUp className="w-4 h-4" />
+              ) : (
+                <ChevronDown className="w-4 h-4" />
+              )}
             </div>
           </button>
 
           {duplicatesExpanded && (
-            <div className="p-4 space-y-3">
-              <p className="text-xs text-zinc-400">
-                Click any item in a cluster to designate it as the surviving canonical product, then merge all sightings and store aliases atomically in one click.
+            <div className="px-5 pb-5 pt-3 border-t border-[var(--border)] space-y-3 bg-[var(--bg-card)]/60">
+              <p className="text-[13px] text-[var(--text-muted)]">
+                Choose the product name you want to keep in each group, then
+                combine its purchases and receipt matches in one click.
               </p>
 
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {duplicateGroups.slice(0, 8).map((group) => {
                   const chosenSurvivorId =
                     survivorOverrides[group.groupKey] &&
-                    group.products.some((p) => p.id === survivorOverrides[group.groupKey])
+                    group.products.some(
+                      (p) => p.id === survivorOverrides[group.groupKey]
+                    )
                       ? survivorOverrides[group.groupKey]
                       : group.survivorId;
                   const survivor =
@@ -514,7 +635,7 @@ export function ProductManagementClient({
                   return (
                     <div
                       key={group.groupKey}
-                      className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+                      className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
                     >
                       <div className="space-y-2 min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -532,33 +653,34 @@ export function ProductManagementClient({
                                 }
                                 title={
                                   isSurvivor
-                                    ? "Surviving product (click another to swap)"
-                                    : "Click to make this product the survivor"
+                                    ? "Main item to keep"
+                                    : "Click to keep this name instead"
                                 }
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors whitespace-nowrap shrink-0 tabular-nums ${
+                                className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-[13px] transition-colors whitespace-nowrap shrink-0 tabular-nums cursor-pointer ${
                                   isSurvivor
-                                    ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-bold"
-                                    : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700"
+                                    ? "bg-[var(--primary-tint)] border-[var(--primary)]/40 text-[var(--primary)] font-semibold"
+                                    : "bg-[var(--bg-page)] border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--border-strong)]"
                                 }`}
                               >
                                 {isSurvivor && (
-                                  <span className="text-[10px] font-mono uppercase text-emerald-400">
-                                    Keep:
-                                  </span>
+                                  <span className="font-semibold">Keep:</span>
                                 )}
                                 <span>{p.displayName}</span>
-                                <span className="text-[10px] font-mono text-zinc-400">
-                                  ({p.sightingsCount}·{p.aliasesCount}a·{p.baseUnit})
+                                <span className="text-[var(--text-muted)] font-normal">
+                                  ({p.sightingsCount} ·{" "}
+                                  {normalizeUnit(p.baseUnit)})
                                 </span>
                               </button>
                             );
                           })}
                         </div>
                         {hasMismatch && (
-                          <div className="flex items-center gap-1.5 text-[11px] font-mono text-amber-300">
-                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          <div className="flex items-center gap-1.5 text-[13px] text-[var(--accent)]">
+                            <AlertTriangle className="w-4 h-4 shrink-0" />
                             <span>
-                              Base unit differs across duplicates — merged sightings will adopt {survivor.baseUnit}.
+                              Units differ across these entries — merged
+                              purchases will use{" "}
+                              {normalizeUnit(survivor.baseUnit)}.
                             </span>
                           </div>
                         )}
@@ -574,7 +696,7 @@ export function ProductManagementClient({
                             survivor.id
                           )
                         }
-                        className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
                       >
                         {isGroupMerging ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
@@ -582,7 +704,8 @@ export function ProductManagementClient({
                           <GitMerge className="w-3.5 h-3.5 shrink-0" />
                         )}
                         <span>
-                          Merge {group.products.length - 1} into &ldquo;{survivor.displayName}&rdquo;
+                          Merge {group.products.length - 1} into &ldquo;
+                          {survivor.displayName}&rdquo;
                         </span>
                       </button>
                     </div>
@@ -591,106 +714,118 @@ export function ProductManagementClient({
               </div>
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* Search & Filter Toolbar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-        {/* Search Input */}
-        <div className="relative flex-1 max-w-md">
-          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-500">
-            <Search className="w-4 h-4" />
-          </div>
-          <input
-            type="text"
-            placeholder="Search products, slugs, or EAN..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 rounded-xl bg-zinc-900/60 border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
-          />
-        </div>
-
-        {/* Filter Controls */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {/* Staple Filter */}
-          <div className="inline-flex rounded-xl p-1 bg-zinc-900 border border-zinc-800">
-            <button
-              type="button"
-              onClick={() => setStapleFilter("all")}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
-                stapleFilter === "all" ? "bg-zinc-800 text-emerald-400 shadow-sm" : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              All ({products.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setStapleFilter("staple")}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 inline-flex items-center gap-1 transition-all ${
-                stapleFilter === "staple" ? "bg-zinc-800 text-amber-400 shadow-sm" : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span>Staples ({products.filter((p) => p.isStaple).length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setStapleFilter("non-staple")}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
-                stapleFilter === "non-staple" ? "bg-zinc-800 text-zinc-200 shadow-sm" : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              Regular ({products.filter((p) => !p.isStaple).length})
-            </button>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search products, categories, or EAN..."
+              className="w-full h-10 pl-10 pr-8 rounded-full bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          {/* Category Dropdown */}
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors"
+            aria-label="Filter by category"
+            className="h-10 px-3.5 rounded-full bg-[var(--bg-card)] border border-[var(--border)] text-[13px] font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary)]"
           >
-            <option value="All">All Categories</option>
-            {CANONICAL_CATEGORIES.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c === "All" ? "All categories" : c}
               </option>
             ))}
           </select>
 
-          {/* Auto-Heal Button */}
-          <button
-            type="button"
-            onClick={handleAutoHeal}
-            disabled={isHealing}
-            className="px-3 py-2 rounded-xl bg-zinc-900 border border-emerald-500/30 hover:bg-emerald-500/10 text-emerald-400 hover:text-emerald-300 text-xs font-semibold shadow-sm inline-flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 disabled:opacity-50 cursor-pointer"
+          <select
+            value={stapleFilter}
+            onChange={(e) =>
+              setStapleFilter(
+                e.target.value as "all" | "staple" | "non-staple"
+              )
+            }
+            aria-label="Filter by staple status"
+            className="h-10 px-3.5 rounded-full bg-[var(--bg-card)] border border-[var(--border)] text-[13px] font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary)]"
           >
-            {isHealing ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            )}
-            <span>Auto-Heal Catalogue</span>
-          </button>
+            <option value="all">All products</option>
+            <option value="staple">Staples only</option>
+            <option value="non-staple">Non-staples</option>
+          </select>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowHealConfirm((prev) => !prev)}
+          className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
+        >
+          <Wand2 className="w-4 h-4 text-[var(--primary)] shrink-0" />
+          Fix units and staples
+        </button>
       </div>
+
+      {/* Inline Confirm for Catalogue Clean-up */}
+      {showHealConfirm && (
+        <div className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-subtle)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <p className="text-[13px] text-[var(--text-primary)]">
+            Check all products for weight/volume unit mismatches and tag common
+            essentials as household staples?
+          </p>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={isHealing}
+              onClick={handleRunCleanUp}
+              className="h-9 px-4 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {isHealing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Run clean-up
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowHealConfirm(false)}
+              className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Multi-Select Bulk Merge Action Bar */}
       {selectedProducts.length >= 2 && (
-        <div className="sticky top-20 z-30 rounded-2xl border border-emerald-500/40 bg-zinc-950/95 backdrop-blur-md p-3.5 shadow-2xl flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 font-mono font-bold whitespace-nowrap shrink-0 tabular-nums">
+        <div className="sticky top-[74px] z-30 rounded-2xl border border-[var(--primary)]/35 bg-[var(--bg-card)]/95 backdrop-blur-md p-4 shadow-[var(--shadow-soft)] flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 text-[13px]">
+            <span className="px-3 py-1 rounded-full bg-[var(--primary-tint)] text-[var(--primary)] font-semibold whitespace-nowrap shrink-0 tabular-nums">
               {selectedProducts.length} selected
             </span>
-            <span className="text-zinc-400">Surviving product:</span>
+            <span className="text-[var(--text-muted)]">Keep product:</span>
             <select
               value={effectiveBulkTargetId}
               onChange={(e) => setBulkTargetId(e.target.value)}
-              className="px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white font-semibold focus:outline-none focus:border-emerald-500"
+              aria-label="Choose product to keep in bulk merge"
+              className="h-9 px-3 rounded-full bg-[var(--bg-page)] border border-[var(--border)] text-[13px] font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary)]"
             >
               {selectedProducts.map((sp) => (
                 <option key={sp.id} value={sp.id}>
-                  {sp.displayName} ({sp.sightingsCount} sightings · {sp.baseUnit})
+                  {sp.displayName} ({sp.sightingsCount} ·{" "}
+                  {normalizeUnit(sp.baseUnit)})
                 </option>
               ))}
             </select>
@@ -700,7 +835,7 @@ export function ProductManagementClient({
             <button
               type="button"
               onClick={() => setSelectedIds(new Set())}
-              className="px-3 py-1.5 rounded-xl border border-zinc-800 text-xs text-zinc-400 hover:text-white whitespace-nowrap shrink-0"
+              className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
             >
               Clear
             </button>
@@ -708,178 +843,333 @@ export function ProductManagementClient({
               type="button"
               onClick={() => void handleBulkMerge()}
               disabled={isBulkMerging}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 disabled:opacity-50 cursor-pointer"
             >
               {isBulkMerging ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
               ) : (
                 <GitMerge className="w-3.5 h-3.5 shrink-0" />
               )}
-              <span>Merge {selectedProducts.length - 1} into Survivor</span>
+              <span>Merge {selectedProducts.length - 1} selected</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Products Table */}
-      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 overflow-hidden shadow-xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-950/80 text-zinc-400 font-mono uppercase text-[11px]">
-                <th className="py-3 px-3 w-10 text-center">Sel</th>
-                <th className="py-3 px-3 w-12 text-center">Staple</th>
-                <th className="py-3 px-4">Canonical Product</th>
-                <th className="py-3 px-4">Category</th>
-                <th className="py-3 px-4 text-center">Base Unit</th>
-                <th className="py-3 px-4 text-right">Sightings</th>
-                <th className="py-3 px-4 text-right">Aliases</th>
-                <th className="py-3 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/60 font-sans">
-              {filteredProducts.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-zinc-500 font-mono">
-                    No matching products found.
-                  </td>
+      {filteredProducts.length === 0 ? (
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] px-6 py-12 text-center text-[14px] text-[var(--text-muted)]">
+          No grocery items match your filters.
+        </div>
+      ) : (
+        <>
+          {/* Desktop Table */}
+          <div className="hidden md:block rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+            <table className="w-full text-left border-collapse text-[14px]">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-[13px] text-[var(--text-muted)]">
+                  <th className="py-3.5 pl-5 pr-2 w-10 font-medium">
+                    <span className="sr-only">Select</span>
+                  </th>
+                  <th className="py-3.5 px-3 font-medium">Product</th>
+                  <th className="py-3.5 px-4 font-medium">Category</th>
+                  <th className="py-3.5 px-4 font-medium">Unit</th>
+                  <th className="py-3.5 px-4 font-medium text-right">
+                    Purchases
+                  </th>
+                  <th className="py-3.5 px-4 font-medium text-right">
+                    Receipt matches
+                  </th>
+                  <th className="py-3.5 px-5 font-medium text-right">
+                    Actions
+                  </th>
                 </tr>
-              ) : (
-                filteredProducts.map((p) => (
-                  <tr key={p.id} className="hover:bg-zinc-800/30 transition-colors group">
-                    {/* Bulk Merge Select Checkbox */}
-                    <td className="py-3 px-3 text-center">
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {filteredProducts.map((product) => {
+                  const isDeleting = deletingId === product.id;
+                  const confirmingDel = confirmDeleteId === product.id;
+
+                  return (
+                    <React.Fragment key={product.id}>
+                      <tr className="hover:bg-[var(--bg-subtle)]/50 transition-colors">
+                        <td className="py-3.5 pl-5 pr-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(product.id)}
+                            onChange={() => toggleSelectRow(product.id)}
+                            aria-label={`Select ${product.displayName} for merge`}
+                            className="w-4 h-4 rounded accent-[var(--primary)] cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-3.5 px-3">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <button
+                              type="button"
+                              disabled={togglingStapleId === product.id}
+                              onClick={() => handleToggleStaple(product)}
+                              title={
+                                product.isStaple
+                                  ? "Remove from household staples"
+                                  : "Mark as household staple"
+                              }
+                              aria-label={`Toggle staple status for ${product.displayName}`}
+                              className={`p-1 rounded-lg hover:bg-[var(--bg-subtle)] shrink-0 cursor-pointer ${
+                                product.isStaple
+                                  ? "text-[var(--accent)]"
+                                  : "text-[var(--text-muted)]/50 hover:text-[var(--text-muted)]"
+                              }`}
+                            >
+                              <Star
+                                className={`w-4 h-4 ${
+                                  product.isStaple ? "fill-current" : ""
+                                }`}
+                              />
+                            </button>
+                            <div className="min-w-0">
+                              <Link
+                                href={`/products/${product.slug}`}
+                                className="font-semibold text-[var(--text-primary)] hover:text-[var(--primary)] hover:underline truncate block"
+                              >
+                                {product.displayName}
+                              </Link>
+                              {product.ean && (
+                                <div className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                                  EAN {product.ean}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-[13px] text-[var(--text-muted)]">
+                          {product.category}
+                        </td>
+                        <td className="py-3.5 px-4 text-[13px] text-[var(--text-primary)]">
+                          Per {normalizeUnit(product.baseUnit)}
+                        </td>
+                        <td className="py-3.5 px-4 text-right tabular-nums text-[var(--text-primary)]">
+                          {product.sightingsCount}
+                        </td>
+                        <td className="py-3.5 px-4 text-right tabular-nums text-[var(--text-muted)]">
+                          {product.aliasesCount}
+                        </td>
+                        <td className="py-3.5 px-5 text-right">
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(product)}
+                              className="h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <Pencil className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMergeSource(product);
+                                setMergeTargetId("");
+                                setMergeSearch("");
+                              }}
+                              className="h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <GitMerge className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                              Merge
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmDeleteId(
+                                  confirmingDel ? null : product.id
+                                )
+                              }
+                              aria-label={`Delete ${product.displayName}`}
+                              className="w-8 h-8 rounded-full hover:bg-[var(--negative-tint)] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--negative)] cursor-pointer shrink-0"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {confirmingDel && (
+                        <tr className="bg-[var(--negative-tint)]/70">
+                          <td colSpan={7} className="px-5 py-3">
+                            <div className="flex items-center justify-between gap-3 text-[13px]">
+                              <span className="text-[var(--text-primary)]">
+                                Remove &ldquo;{product.displayName}&rdquo; from
+                                the catalogue? Existing receipt lines stay intact
+                                but unlinked.
+                              </span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={isDeleting}
+                                  onClick={() => handleConfirmDelete(product)}
+                                  className="h-8 px-3.5 rounded-full bg-[var(--negative)] text-[var(--negative-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                                >
+                                  {isDeleting && (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  )}
+                                  Yes, delete
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="h-8 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile Stacked Product Cards */}
+          <div className="md:hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] divide-y divide-[var(--border)] overflow-hidden">
+            {filteredProducts.map((product) => {
+              const confirmingDel = confirmDeleteId === product.id;
+              const isDeleting = deletingId === product.id;
+
+              return (
+                <div key={product.id} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5 min-w-0">
                       <input
                         type="checkbox"
-                        checked={selectedIds.has(p.id)}
-                        onChange={() => toggleSelectRow(p.id)}
-                        aria-label={`Select ${p.displayName} for merge`}
-                        className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-950 text-emerald-500 cursor-pointer"
+                        checked={selectedIds.has(product.id)}
+                        onChange={() => toggleSelectRow(product.id)}
+                        aria-label={`Select ${product.displayName} for merge`}
+                        className="w-4 h-4 rounded mt-1 accent-[var(--primary)] shrink-0 cursor-pointer"
                       />
-                    </td>
-
-                    {/* Staple Toggle */}
-                    <td className="py-3 px-3 text-center">
                       <button
                         type="button"
-                        onClick={() => handleToggleStaple(p.id, p.isStaple)}
-                        className={`p-1.5 rounded-lg transition-colors inline-flex items-center justify-center whitespace-nowrap shrink-0 ${
-                          p.isStaple
-                            ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
-                            : "text-zinc-600 hover:text-amber-400 hover:bg-zinc-800"
+                        disabled={togglingStapleId === product.id}
+                        onClick={() => handleToggleStaple(product)}
+                        aria-label={`Toggle staple status for ${product.displayName}`}
+                        className={`p-1 rounded-lg mt-0.5 shrink-0 cursor-pointer ${
+                          product.isStaple
+                            ? "text-[var(--accent)]"
+                            : "text-[var(--text-muted)]/50"
                         }`}
-                        title={p.isStaple ? "Remove from staple basket" : "Flag as everyday staple"}
                       >
-                        <Star className={`w-4 h-4 ${p.isStaple ? "fill-amber-400" : ""}`} />
+                        <Star
+                          className={`w-4 h-4 ${
+                            product.isStaple ? "fill-current" : ""
+                          }`}
+                        />
                       </button>
-                    </td>
 
-                    {/* Display Name & Slug */}
-                    <td className="py-3 px-4">
-                      <div className="space-y-0.5">
+                      <div className="min-w-0 space-y-0.5">
                         <Link
-                          href={`/products/${p.slug}`}
-                          className="font-bold text-zinc-100 hover:text-emerald-400 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                          href={`/products/${product.slug}`}
+                          className="font-semibold text-[15px] text-[var(--text-primary)] hover:text-[var(--primary)] block truncate"
                         >
-                          <span>{p.displayName}</span>
-                          <ArrowRight className="w-3 h-3 text-zinc-600 group-hover:text-emerald-400 group-hover:translate-x-0.5 transition-all" />
+                          {product.displayName}
                         </Link>
-                        <div className="text-[10px] font-mono text-zinc-500">
-                          {p.slug}
-                          {p.ean ? ` · EAN ${p.ean}` : ""}
+                        <div className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                          {product.category} · Per{" "}
+                          {normalizeUnit(product.baseUnit)} ·{" "}
+                          {product.sightingsCount}{" "}
+                          {product.sightingsCount === 1
+                            ? "purchase"
+                            : "purchases"}
+                          {product.ean ? ` · EAN ${product.ean}` : ""}
                         </div>
                       </div>
-                    </td>
+                    </div>
+                  </div>
 
-                    {/* Category */}
-                    <td className="py-3 px-4">
-                      <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700/60 text-[10px] font-medium whitespace-nowrap shrink-0">
-                        {p.category}
-                      </span>
-                    </td>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(product)}
+                      className="h-9 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMergeSource(product);
+                        setMergeTargetId("");
+                        setMergeSearch("");
+                      }}
+                      className="h-9 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <GitMerge className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                      Merge
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setConfirmDeleteId(confirmingDel ? null : product.id)
+                      }
+                      className="h-9 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--negative)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </button>
+                  </div>
 
-                    {/* Base Unit */}
-                    <td className="py-3 px-4 text-center">
-                      <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-zinc-800 text-emerald-400 border border-zinc-700/60 whitespace-nowrap shrink-0">
-                        {p.baseUnit}
-                      </span>
-                    </td>
-
-                    {/* Sightings */}
-                    <td className="py-3 px-4 text-right font-mono font-bold text-zinc-200 tabular-nums">
-                      {p.sightingsCount}
-                    </td>
-
-                    {/* Aliases */}
-                    <td className="py-3 px-4 text-right font-mono text-zinc-400 tabular-nums">
-                      {p.aliasesCount}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="py-3 px-4 text-right">
-                      <div className="inline-flex items-center gap-1.5">
+                  {confirmingDel && (
+                    <div className="rounded-xl bg-[var(--negative-tint)] p-3 space-y-2 text-[13px]">
+                      <p className="text-[var(--text-primary)]">
+                        Delete &ldquo;{product.displayName}&rdquo; from
+                        catalogue?
+                      </p>
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => openEditModal(p)}
-                          className="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors whitespace-nowrap shrink-0"
-                          title="Edit Product"
+                          disabled={isDeleting}
+                          onClick={() => handleConfirmDelete(product)}
+                          className="h-8 px-3.5 rounded-full bg-[var(--negative)] text-[var(--negative-on)] text-[13px] font-semibold cursor-pointer"
                         >
-                          <Pencil className="w-3.5 h-3.5" />
+                          Yes, delete
                         </button>
                         <button
                           type="button"
-                          onClick={() => openMergeModal(p)}
-                          className="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-emerald-500/20 text-zinc-300 hover:text-emerald-400 transition-colors whitespace-nowrap shrink-0"
-                          title="Merge into another product..."
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="h-8 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium cursor-pointer"
                         >
-                          <GitMerge className="w-3.5 h-3.5" />
+                          Cancel
                         </button>
-                        {p.sightingsCount === 0 && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteProduct(p.id)}
-                            disabled={deletingId === p.id}
-                            className="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-rose-500/20 text-zinc-300 hover:text-rose-400 transition-colors whitespace-nowrap shrink-0"
-                            title="Delete unused product"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
                       </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* Native <dialog> Edit Product Modal */}
       <dialog
         ref={editDialogRef}
         aria-labelledby={editTitleId}
-        className="m-auto w-[calc(100%-1.5rem)] max-w-lg rounded-3xl border border-zinc-800 bg-zinc-950 text-zinc-100 p-0 shadow-2xl backdrop:bg-black/80 backdrop:backdrop-blur-sm"
+        className="m-auto w-[calc(100%-1.5rem)] max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-primary)] p-0 shadow-2xl backdrop:bg-[var(--scrim)] backdrop:backdrop-blur-[2px]"
       >
-        {editingProduct && (
-          <div className="p-6 sm:p-8 space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                  <Pencil className="w-4 h-4" />
-                </div>
-                <div>
-                  <h1 id={editTitleId} className="text-base font-bold text-white">
-                    Edit Product
-                  </h1>
-                  <p className="text-xs text-zinc-400">Canonical catalogue entry</p>
-                </div>
-              </div>
+        {editTarget && (
+          <div className="p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between gap-3">
+              <h2
+                id={editTitleId}
+                className="font-display font-semibold text-[20px] text-[var(--text-primary)]"
+              >
+                Edit product
+              </h2>
               <button
                 type="button"
                 onClick={() => editDialogRef.current?.close("cancel")}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white whitespace-nowrap shrink-0"
-                aria-label="Close edit dialog"
+                aria-label="Close"
+                className="w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -887,86 +1177,79 @@ export function ProductManagementClient({
 
             <form onSubmit={handleSaveEdit} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-300">Display Name</label>
+                <label className="block text-[13px] font-medium text-[var(--text-primary)]">
+                  Product name
+                </label>
                 <input
                   type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
                   required
                   autoFocus
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-zinc-300">Category</label>
+                  <label className="block text-[13px] font-medium text-[var(--text-primary)]">
+                    Category
+                  </label>
                   <select
                     value={editCategory}
                     onChange={(e) => setEditCategory(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    className="w-full h-10 px-3 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
                   >
-                    {CANONICAL_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
+                    {CANONICAL_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-zinc-300">Base Unit</label>
-                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-zinc-900 border border-zinc-800">
-                    {(["KG", "L", "UNIT"] as const).map((unit) => (
-                      <button
-                        key={unit}
-                        type="button"
-                        onClick={() => setEditBaseUnit(unit)}
-                        className={`py-1.5 text-xs font-bold rounded-lg whitespace-nowrap shrink-0 transition-all ${
-                          editBaseUnit === unit
-                            ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        {unit}
-                      </button>
-                    ))}
-                  </div>
+                  <label className="block text-[13px] font-medium text-[var(--text-primary)]">
+                    Tracked unit
+                  </label>
+                  <select
+                    value={editBaseUnit}
+                    onChange={(e) =>
+                      setEditBaseUnit(e.target.value as "KG" | "L" | "UNIT")
+                    }
+                    className="w-full h-10 px-3 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
+                  >
+                    <option value="KG">Per kg</option>
+                    <option value="L">Per L</option>
+                    <option value="UNIT">Per unit</option>
+                  </select>
                 </div>
               </div>
 
-              <div className="pt-2">
-                <label className="flex items-center gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 transition-colors cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editIsStaple}
-                    onChange={(e) => setEditIsStaple(e.target.checked)}
-                    className="w-4 h-4 rounded border-zinc-700 text-emerald-500 bg-zinc-950"
-                  />
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-                      <Star className={`w-3.5 h-3.5 ${editIsStaple ? "text-amber-400 fill-amber-400" : "text-zinc-500"}`} />
-                      <span>Everyday Household Staple</span>
-                    </span>
-                    <p className="text-[11px] text-zinc-500">
-                      Prioritizes this product in search suggestions, comparator presets, and the Staple Basket Inflation Index.
-                    </p>
-                  </div>
-                </label>
-              </div>
+              <label className="inline-flex items-center gap-2 text-[14px] text-[var(--text-primary)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editIsStaple}
+                  onChange={(e) => setEditIsStaple(e.target.checked)}
+                  className="w-4 h-4 rounded accent-[var(--primary)]"
+                />
+                Include in household staples benchmark
+              </label>
 
-              {/* Optional Nutrition & Barcode Fields */}
-              <div className="pt-2 border-t border-zinc-800/80 space-y-2.5">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
-                  Nutrition & Barcode Cache (Optional)
+              {/* Optional Nutrition & Barcode Cache */}
+              <div className="pt-3 border-t border-[var(--border)] space-y-3">
+                <div className="text-[13px] font-medium text-[var(--text-muted)]">
+                  Nutrition &amp; barcode details (optional)
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <div>
-                    <label className="text-[10px] font-mono text-zinc-500">Nutri-Score</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="block text-[13px] text-[var(--text-muted)]">
+                      Nutri-Score
+                    </label>
                     <select
                       value={editNutriScore}
                       onChange={(e) => setEditNutriScore(e.target.value)}
-                      className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
+                      className="w-full h-9 px-2.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[13px] text-[var(--text-primary)] focus:outline-none"
                     >
                       <option value="">—</option>
                       <option value="a">A</option>
@@ -976,12 +1259,14 @@ export function ProductManagementClient({
                       <option value="e">E</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-mono text-zinc-500">NOVA</label>
+                  <div className="space-y-1">
+                    <label className="block text-[13px] text-[var(--text-muted)]">
+                      NOVA
+                    </label>
                     <select
                       value={editNovaGroup}
                       onChange={(e) => setEditNovaGroup(e.target.value)}
-                      className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-white"
+                      className="w-full h-9 px-2.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[13px] text-[var(--text-primary)] focus:outline-none"
                     >
                       <option value="">—</option>
                       <option value="1">1</option>
@@ -990,8 +1275,10 @@ export function ProductManagementClient({
                       <option value="4">4</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-mono text-zinc-500">Prot/100g</label>
+                  <div className="space-y-1">
+                    <label className="block text-[13px] text-[var(--text-muted)]">
+                      Protein / 100g
+                    </label>
                     <input
                       type="number"
                       step="0.1"
@@ -999,11 +1286,14 @@ export function ProductManagementClient({
                       max="100"
                       value={editProtein}
                       onChange={(e) => setEditProtein(e.target.value)}
-                      className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-white tabular-nums"
+                      placeholder="g"
+                      className="w-full h-9 px-2.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[13px] tabular-nums text-[var(--text-primary)] focus:outline-none"
                     />
                   </div>
-                  <div>
-                    <label className="text-[10px] font-mono text-zinc-500">kcal/100g</label>
+                  <div className="space-y-1">
+                    <label className="block text-[13px] text-[var(--text-muted)]">
+                      kcal / 100g
+                    </label>
                     <input
                       type="number"
                       step="1"
@@ -1011,35 +1301,43 @@ export function ProductManagementClient({
                       max="1000"
                       value={editKcal}
                       onChange={(e) => setEditKcal(e.target.value)}
-                      className="w-full px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-white tabular-nums"
+                      placeholder="kcal"
+                      className="w-full h-9 px-2.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[13px] tabular-nums text-[var(--text-primary)] focus:outline-none"
                     />
                   </div>
                 </div>
-                <input
-                  type="text"
-                  value={editEan}
-                  onChange={(e) => setEditEan(e.target.value)}
-                  placeholder="Optional EAN / Barcode"
-                  className="w-full px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-mono text-white tabular-nums"
-                />
+                <div className="space-y-1">
+                  <label className="block text-[13px] text-[var(--text-muted)]">
+                    EAN / Barcode
+                  </label>
+                  <input
+                    type="text"
+                    value={editEan}
+                    onChange={(e) => setEditEan(e.target.value)}
+                    placeholder="e.g. 8480000105302"
+                    className="w-full h-9 px-3 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[13px] tabular-nums text-[var(--text-primary)] focus:outline-none"
+                  />
+                </div>
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => editDialogRef.current?.close("cancel")}
                   disabled={isSavingEdit}
-                  className="px-4 py-2 rounded-xl border border-zinc-800 text-xs text-zinc-400 hover:bg-zinc-900 whitespace-nowrap shrink-0"
+                  className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSavingEdit}
-                  className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold shadow-md shadow-emerald-500/20 inline-flex items-center gap-2 whitespace-nowrap shrink-0"
+                  className="h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
                 >
-                  {isSavingEdit && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Save Changes</span>
+                  {isSavingEdit && (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  )}
+                  Save changes
                 </button>
               </div>
             </form>
@@ -1047,137 +1345,113 @@ export function ProductManagementClient({
         )}
       </dialog>
 
-      {/* Native <dialog> Merge Duplicate Product Modal */}
+      {/* Native <dialog> Merge Duplicate Modal */}
       <dialog
         ref={mergeDialogRef}
         aria-labelledby={mergeTitleId}
-        className="m-auto w-[calc(100%-1.5rem)] max-w-xl rounded-3xl border border-zinc-800 bg-zinc-950 text-zinc-100 p-0 shadow-2xl backdrop:bg-black/80 backdrop:backdrop-blur-sm"
+        className="m-auto w-[calc(100%-1.5rem)] max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-primary)] p-0 shadow-2xl backdrop:bg-[var(--scrim)] backdrop:backdrop-blur-[2px]"
       >
-        {mergingSource && (
-          <div className="p-6 sm:p-8 space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                  <GitMerge className="w-4 h-4" />
-                </div>
-                <div>
-                  <h1 id={mergeTitleId} className="text-base font-bold text-white">
-                    Merge Duplicate Product
-                  </h1>
-                  <p className="text-xs text-zinc-400">
-                    Reassigns all sightings and POS aliases in one transaction
-                  </p>
-                </div>
+        {mergeSource && (
+          <div className="p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <h2
+                  id={mergeTitleId}
+                  className="font-display font-semibold text-[20px] text-[var(--text-primary)]"
+                >
+                  Merge duplicate product
+                </h2>
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  Move all {mergeSource.sightingsCount} recorded purchases and{" "}
+                  {mergeSource.aliasesCount} receipt matches from{" "}
+                  <strong className="text-[var(--text-primary)]">
+                    {mergeSource.displayName}
+                  </strong>{" "}
+                  into the main entry below.
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => mergeDialogRef.current?.close("cancel")}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white whitespace-nowrap shrink-0"
-                aria-label="Close merge dialog"
+                aria-label="Close"
+                className="w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)] cursor-pointer shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Source Product Info */}
-            <div className="p-4 rounded-2xl border border-rose-500/20 bg-rose-500/5 space-y-1">
-              <div className="text-[10px] font-mono text-rose-400 uppercase font-semibold">
-                Product to be Deleted (Source)
+            <form onSubmit={handleConfirmMerge} className="space-y-4">
+              <div className="relative">
+                <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  autoFocus
+                  value={mergeSearch}
+                  onChange={(e) => setMergeSearch(e.target.value)}
+                  placeholder="Search target product to merge into..."
+                  className="w-full h-10 pl-10 pr-4 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
+                />
               </div>
-              <div className="text-sm font-bold text-white">{mergingSource.displayName}</div>
-              <div className="text-[11px] font-mono text-zinc-400 tabular-nums">
-                {mergingSource.sightingsCount} sightings · {mergingSource.aliasesCount} aliases ·{" "}
-                {mergingSource.category} · {mergingSource.baseUnit}
-              </div>
-            </div>
 
-            <form onSubmit={handleExecuteMerge} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-300">
-                  Select Surviving Product (Ranked by similarity)
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-500">
-                    <Search className="w-3.5 h-3.5" />
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Search target product name..."
-                    value={mergeTargetQuery}
-                    onChange={(e) => setMergeTargetQuery(e.target.value)}
-                    autoFocus
-                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                {/* Candidate Selection List */}
-                <div className="max-h-52 overflow-y-auto rounded-xl border border-zinc-800 divide-y divide-zinc-800/60 bg-zinc-900/60 p-1">
-                  {mergeCandidates.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-zinc-500 font-mono">
-                      No matching candidate products.
-                    </div>
-                  ) : (
-                    mergeCandidates.map(({ product: c, similarity }) => {
-                      const isSelected = mergeTargetId === c.id;
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => setMergeTargetId(c.id)}
-                          className={`w-full text-left p-2.5 rounded-lg transition-colors flex items-center justify-between gap-2 ${
-                            isSelected
-                              ? "bg-emerald-500/20 border border-emerald-500/40 text-white"
-                              : "hover:bg-zinc-800/60 text-zinc-300"
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="font-semibold text-xs text-zinc-100 flex items-center gap-1.5 truncate">
-                              <span className="truncate">{c.displayName}</span>
-                              {c.isStaple && <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />}
-                              {similarity >= 0.6 && (
-                                <span className="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 font-mono text-[10px] whitespace-nowrap shrink-0">
-                                  {Math.round(similarity * 100)}% match
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[10px] font-mono text-zinc-500 tabular-nums">
-                              {c.category} · {c.baseUnit} · {c.sightingsCount} sightings · {c.aliasesCount} aliases
-                            </div>
-                          </div>
-                          {isSelected && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
+              <div className="max-h-56 overflow-y-auto rounded-xl border border-[var(--border)] divide-y divide-[var(--border)]">
+                {mergeCandidates.map(({ product: cand, similarity }) => {
+                  const selected = mergeTargetId === cand.id;
+                  return (
+                    <button
+                      key={cand.id}
+                      type="button"
+                      onClick={() => setMergeTargetId(cand.id)}
+                      className={`w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 text-[13px] cursor-pointer transition-colors ${
+                        selected
+                          ? "bg-[var(--primary-tint)] text-[var(--text-primary)] font-semibold"
+                          : "hover:bg-[var(--bg-subtle)]/70 text-[var(--text-primary)]"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="truncate">{cand.displayName}</span>
+                        {similarity >= 0.6 && (
+                          <span className="px-2 py-0.5 rounded-full bg-[var(--primary-tint)] text-[var(--primary)] text-[13px] leading-none font-medium whitespace-nowrap shrink-0 tabular-nums">
+                            {Math.round(similarity * 100)}% match
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[var(--text-muted)] tabular-nums shrink-0">
+                        {cand.category} · {normalizeUnit(cand.baseUnit)} ·{" "}
+                        {cand.sightingsCount}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               {selectedMergeTarget &&
-                selectedMergeTarget.baseUnit !== mergingSource.baseUnit && (
-                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-[11px] font-mono text-amber-300 flex items-start gap-2">
+                selectedMergeTarget.baseUnit !== mergeSource.baseUnit && (
+                  <div className="p-3 rounded-xl border border-[var(--accent)]/35 bg-[var(--accent-tint)] text-[13px] text-[var(--accent)] flex items-start gap-2">
                     <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>
-                      Base unit mismatch ({mergingSource.baseUnit} → {selectedMergeTarget.baseUnit}). Reassigned sightings will adopt {selectedMergeTarget.baseUnit}.
+                      Unit difference ({normalizeUnit(mergeSource.baseUnit)} →{" "}
+                      {normalizeUnit(selectedMergeTarget.baseUnit)}). Merged
+                      purchases will adopt{" "}
+                      {normalizeUnit(selectedMergeTarget.baseUnit)}.
                     </span>
                   </div>
                 )}
 
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => mergeDialogRef.current?.close("cancel")}
-                  disabled={isMerging}
-                  className="px-4 py-2 rounded-xl border border-zinc-800 text-xs text-zinc-400 hover:bg-zinc-900 whitespace-nowrap shrink-0"
+                  className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={!mergeTargetId || isMerging}
-                  className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold shadow-md shadow-emerald-500/20 inline-flex items-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
                 >
-                  {isMerging && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Confirm Merge</span>
+                  {isMerging && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Merge products
                 </button>
               </div>
             </form>

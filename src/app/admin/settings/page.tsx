@@ -1,25 +1,22 @@
 import React from "react";
 import fs from "fs";
 import path from "path";
+import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { redirect } from "next/navigation";
-import { Settings as SettingsIcon } from "lucide-react";
 import { isPublicCatalogEnabled } from "@/lib/settings";
 import { isDemoModeActive } from "@/lib/demo/demo-data";
 import { UPLOAD_DIR } from "@/lib/receipts/preprocess";
-import { SettingsClient } from "./settings-client";
 import { AdminHeaderTabs } from "@/components/admin/admin-header-tabs";
+import { SettingsClient } from "./settings-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminSettingsPage() {
   const session = await auth();
-
   if (!session?.user) {
     redirect("/login?callbackUrl=/admin/settings");
   }
-
   if (session.user.role !== "ADMIN") {
     redirect("/");
   }
@@ -77,29 +74,19 @@ export default async function AdminSettingsPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Top Banner / Breadcrumb */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-6">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-            <span>ADMINISTRATION</span>
-            <span>/</span>
-            <span className="text-emerald-400">SYSTEM SETTINGS</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white flex items-center gap-2.5">
-            <SettingsIcon className="w-6 h-6 text-emerald-400" />
-            <span>System Settings</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-zinc-400">
-            Manage instance privacy policies, access controls, backups, and system preferences.
-          </p>
-        </div>
+    <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-7 sm:py-10 space-y-6">
+      <div className="space-y-1.5">
+        <h1 className="font-display font-bold text-[28px] sm:text-[34px] leading-tight text-[var(--text-primary)]">
+          Settings and administration
+        </h1>
+        <p className="text-[14px] text-[var(--text-muted)]">
+          Manage household privacy, sample data, backups, user accounts, store
+          sync, and your grocery catalogue.
+        </p>
       </div>
 
-      {/* Admin Navigation Tabs */}
       <AdminHeaderTabs />
 
-      {/* Interactive Settings Client */}
       <SettingsClient
         initialPublicCatalog={isPublicCatalog}
         isDemoActive={isDemoActive}

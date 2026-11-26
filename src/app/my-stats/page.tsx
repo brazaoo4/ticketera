@@ -56,10 +56,10 @@ export default async function MyStatsPage() {
 
   if (receipts.length === 0) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
+      <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-14 sm:py-20">
         <EmptyStateDemoCard
-          title="Personal Inflation & Analytics"
-          description="To calculate your personal inflation and track shrinkflation across your groceries, confirmed receipts are required. Upload your first receipt or load the demo dataset."
+          title="Your grocery spending"
+          description="Confirm your first supermarket receipt to unlock monthly spending trends, category totals, and pack-size alerts."
         />
       </div>
     );

@@ -61,7 +61,7 @@ export default async function ProductsPage() {
       purchaseDate: item.receipt.purchaseDate.toISOString(),
       storeName: item.receipt.store.name,
       storeSlug: item.receipt.store.slug,
-      storeBrandHex: item.receipt.store.brandHex || "#10b981",
+      storeBrandHex: item.receipt.store.brandHex || "#15803D",
       unitPrice: Number(item.unitPrice),
       pricePerBaseUnit: Number(item.pricePerBaseUnit),
     })),

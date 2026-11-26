@@ -1,33 +1,16 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-  ReferenceLine,
-  type TooltipContentProps,
-} from "recharts";
-import {
-  TrendingDown,
-  TrendingUp,
-  Store as StoreIcon,
   ArrowLeft,
-  Scale,
-  Sparkles,
-  Receipt as ReceiptIcon,
-  Trash2,
-  Loader2,
+  AlertTriangle,
   AlertCircle,
-  X,
+  Loader2,
   Pencil,
-  Star,
+  Trash2,
+  X,
   Leaf,
   ScanBarcode,
   RefreshCw,
@@ -40,8 +23,7 @@ import {
   fetchAndCacheProductNutritionAction,
 } from "./actions";
 import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
-import { useRouter } from "next/navigation";
-import { ShrinkflationIncident, formatMeasure } from "@/lib/analytics/shrinkflation-types";
+import { ShrinkflationIncident } from "@/lib/analytics/shrinkflation-types";
 import {
   NON_FOOD_CATEGORIES,
   computeKcalPerEuro,
@@ -50,33 +32,40 @@ import {
   getNutriScoreBadgeStyle,
 } from "@/lib/analytics/nutrition";
 import { BarcodeScannerModal } from "@/components/common/barcode-scanner-modal";
+import {
+  formatCurrency,
+  formatPriceRange,
+  formatUnitPrice,
+  formatMeasureText,
+  formatLineMeasure,
+  formatPercent,
+  formatDate,
+  formatShortDate,
+  formatDateInputDDMMYYYY,
+  parseDDMMYYYYToISO,
+  getStoreBrand,
+  normalizeUnit,
+} from "@/lib/format";
 
 export function formatPackBadge(
   packSize: number,
   baseUnit: "KG" | "L" | "UNIT",
   isVariableWeight?: boolean
 ): string {
-  if (isVariableWeight) return "Loose / Counter";
-  if (baseUnit === "L") {
-    if (packSize < 1) return `Pack ${Math.round(packSize * 1000)}ml`;
-    return `Pack ${packSize % 1 === 0 ? packSize.toFixed(0) : packSize.toFixed(1)}L`;
-  }
-  if (baseUnit === "KG") {
-    if (packSize < 1) return `Pack ${Math.round(packSize * 1000)}g`;
-    return `Pack ${packSize % 1 === 0 ? packSize.toFixed(0) : packSize.toFixed(2)}kg`;
-  }
-  return packSize === 1 ? "1 unit" : `Pack ${packSize} units`;
+  if (isVariableWeight) return "Loose / counter";
+  return formatMeasureText(packSize, baseUnit);
 }
 
 export interface SightingObservation {
   id: string;
   receiptId: string;
-  purchaseDate: string; // ISO
+  purchaseDate: string;
   storeName: string;
   storeSlug: string;
   storeBrandHex: string;
   rawName: string;
-  unitPrice: number; // pack price
+  unitPrice: number;
+  totalPrice: number;
   pricePerBaseUnit: number;
   baseUnit: "KG" | "L" | "UNIT";
   unitMeasure: number;
@@ -99,6 +88,7 @@ export interface ProductTrackerClientProps {
     nutritionSource?: string | null;
     nutritionUpdatedAt?: string | null;
   };
+  allProducts?: Array<{ slug: string; displayName: string }>;
   sightings: SightingObservation[];
   aliases: Array<{
     id?: string;
@@ -115,24 +105,28 @@ export interface ProductTrackerClientProps {
   shrinkflationIncidents?: ShrinkflationIncident[];
 }
 
-interface StoreMeta {
-  packPrice: number;
-  format: string;
-}
-
-interface ChartPoint {
-  date: string;
-  displayDate: string;
-  _meta?: Record<string, StoreMeta>;
-  [storeKey: string]: string | number | Record<string, StoreMeta> | undefined;
-}
-
 type Timeframe = "1M" | "3M" | "6M" | "1Y" | "2Y" | "All";
 type PriceMode = "unit" | "pack";
 type ChartCurve = "step" | "smooth";
 
+interface PlottedPoint {
+  id: string;
+  date: string;
+  iso: string;
+  storeName: string;
+  storeBrandHex: string;
+  value: number;
+  packPrice: number;
+  totalPrice: number;
+  unitMeasure: number;
+  quantity: number;
+  x: number;
+  y: number;
+}
+
 export function ProductTrackerClient({
   product,
+  allProducts = [],
   sightings,
   aliases,
   shrinkflationIncidents = [],
@@ -142,32 +136,42 @@ export function ProductTrackerClient({
 }: ProductTrackerClientProps) {
   const router = useRouter();
   const [productData, setProductData] = useState(product);
-  const [currentSightings, setCurrentSightings] = useState<SightingObservation[]>(sightings);
+  const [currentSightings, setCurrentSightings] =
+    useState<SightingObservation[]>(sightings);
   const [timeframe, setTimeframe] = useState<Timeframe>("2Y");
   const [priceMode, setPriceMode] = useState<PriceMode>("unit");
   const [chartCurve, setChartCurve] = useState<ChartCurve>("step");
-  const [mounted, setMounted] = useState(false);
+  const [isolatedStore, setIsolatedStore] = useState<string | null>(null);
+  const [hoveredPoint, setHoveredPoint] = useState<PlottedPoint | null>(null);
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Edit individual sighting modal state
-  const [editingSighting, setEditingSighting] = useState<SightingObservation | null>(null);
+  // Edit purchase modal state
+  const [editingSighting, setEditingSighting] =
+    useState<SightingObservation | null>(null);
   const [editSightingPrice, setEditSightingPrice] = useState<string>("");
   const [editSightingQty, setEditSightingQty] = useState<string>("1");
   const [editSightingMeasure, setEditSightingMeasure] = useState<string>("");
   const [editSightingRawName, setEditSightingRawName] = useState<string>("");
   const [editSightingDate, setEditSightingDate] = useState<string>("");
   const [isSavingSighting, setIsSavingSighting] = useState(false);
-  const [sightingSaveError, setSightingSaveError] = useState<string | null>(null);
+  const [sightingSaveError, setSightingSaveError] = useState<string | null>(
+    null
+  );
 
   // Edit product modal state
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editName, setEditName] = useState(product.displayName);
   const [editCategory, setEditCategory] = useState(product.category);
-  const [editBaseUnit, setEditBaseUnit] = useState<"KG" | "L" | "UNIT">(product.baseUnit);
+  const [editBaseUnit, setEditBaseUnit] = useState<"KG" | "L" | "UNIT">(
+    product.baseUnit
+  );
   const [editIsStaple, setEditIsStaple] = useState(product.isStaple);
-  const [editNutriScore, setEditNutriScore] = useState<string>(product.nutriScore || "");
+  const [editNutriScore, setEditNutriScore] = useState<string>(
+    product.nutriScore || ""
+  );
   const [editNovaGroup, setEditNovaGroup] = useState<string>(
     product.novaGroup ? String(product.novaGroup) : ""
   );
@@ -192,21 +196,22 @@ export function ProductTrackerClient({
 
   // Normalize product history modal state
   const [isNormalizeModalOpen, setIsNormalizeModalOpen] = useState(false);
-  const [normalizeBaseUnit, setNormalizeBaseUnit] = useState<"KG" | "L" | "UNIT">(product.baseUnit);
-  const [aliasFormats, setAliasFormats] = useState(() => {
-    return aliases.map((a) => ({
+  const [normalizeBaseUnit, setNormalizeBaseUnit] = useState<
+    "KG" | "L" | "UNIT"
+  >(product.baseUnit);
+  const [aliasFormats, setAliasFormats] = useState(() =>
+    aliases.map((a) => ({
       aliasId: a.id || "",
       storeName: a.storeName,
       storeBrandHex: a.storeBrandHex,
       rawAlias: a.rawAlias,
       unitMeasurePerPack: a.unitMeasurePerPack ?? null,
       isVariableWeight: !!a.isVariableWeight,
-    }));
-  });
+    }))
+  );
   const [isNormalizing, setIsNormalizing] = useState(false);
   const [normalizeError, setNormalizeError] = useState<string | null>(null);
 
-  // Distinct pack formats across observations
   const availableFormats = useMemo(() => {
     const formatCountMap = new Map<string, number>();
     currentSightings.forEach((s) => {
@@ -215,65 +220,374 @@ export function ProductTrackerClient({
       const badge = formatPackBadge(single, s.baseUnit);
       formatCountMap.set(badge, (formatCountMap.get(badge) || 0) + 1);
     });
-
-    const entries = Array.from(formatCountMap.entries()).map(([label, count]) => ({
-      label,
-      count,
-    }));
-    entries.sort((a, b) => b.count - a.count);
-    return entries;
+    return Array.from(formatCountMap.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
   }, [currentSightings]);
 
   const [selectedFormat, setSelectedFormat] = useState<string>("all");
 
-  // Smart Pack Price Protection: if switched to pack mode with multiple sizes and all selected, auto-select most common
-  useEffect(() => {
-    if (priceMode === "pack" && availableFormats.length >= 2 && selectedFormat === "all") {
-      if (availableFormats[0]) {
-        setSelectedFormat(availableFormats[0].label);
-      }
+  const handlePriceModeChange = (mode: PriceMode) => {
+    setPriceMode(mode);
+    if (
+      mode === "pack" &&
+      availableFormats.length >= 2 &&
+      selectedFormat === "all" &&
+      availableFormats[0]
+    ) {
+      setSelectedFormat(availableFormats[0].label);
     }
-  }, [priceMode, availableFormats, selectedFormat]);
+  };
 
-  useEffect(() => {
-    setProductData(product);
-    setEditName(product.displayName);
-    setEditCategory(product.category);
-    setEditBaseUnit(product.baseUnit);
-    setEditIsStaple(product.isStaple);
-    setEditNutriScore(product.nutriScore || "");
-    setEditNovaGroup(product.novaGroup ? String(product.novaGroup) : "");
-    setEditProtein(
-      product.proteinPer100g !== null && product.proteinPer100g !== undefined
-        ? String(product.proteinPer100g)
-        : ""
-    );
-    setEditKcal(
-      product.kcalPer100g !== null && product.kcalPer100g !== undefined
-        ? String(product.kcalPer100g)
-        : ""
-    );
-    setEditEan(product.ean || "");
-    setNormalizeBaseUnit(product.baseUnit);
-    setAliasFormats(
-      aliases.map((a) => ({
-        aliasId: a.id || "",
-        storeName: a.storeName,
-        storeBrandHex: a.storeBrandHex,
-        rawAlias: a.rawAlias,
-        unitMeasurePerPack: a.unitMeasurePerPack ?? null,
-        isVariableWeight: !!a.isVariableWeight,
-      }))
-    );
-  }, [product, aliases]);
+  const unitNoun =
+    productData.baseUnit === "KG"
+      ? "Per kg"
+      : productData.baseUnit === "L"
+        ? "Per litre"
+        : "Per unit";
 
-  useEffect(() => {
-    setCurrentSightings(sightings);
-  }, [sightings]);
+  const formatValue = (val: number) =>
+    priceMode === "unit"
+      ? formatUnitPrice(val, productData.baseUnit)
+      : formatCurrency(val);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const latestDateMs = useMemo(() => {
+    if (currentSightings.length === 0) return 0;
+    return Math.max(
+      ...currentSightings.map((s) => new Date(s.purchaseDate).getTime())
+    );
+  }, [currentSightings]);
+
+  const filteredSightings = useMemo(() => {
+    let list = currentSightings;
+    if (selectedFormat !== "all") {
+      list = list.filter((s) => {
+        const q = Math.max(Number(s.quantity) || 1, 1);
+        const single = Number((Number(s.unitMeasure) / q).toFixed(3));
+        return formatPackBadge(single, s.baseUnit) === selectedFormat;
+      });
+    }
+    if (timeframe === "All") return list;
+
+    const daysMap: Record<Timeframe, number> = {
+      "1M": 31,
+      "3M": 92,
+      "6M": 183,
+      "1Y": 366,
+      "2Y": 732,
+      All: Infinity,
+    };
+    const cutoff = latestDateMs - daysMap[timeframe] * 24 * 60 * 60 * 1000;
+    return list.filter((s) => new Date(s.purchaseDate).getTime() >= cutoff);
+  }, [currentSightings, timeframe, selectedFormat, latestDateMs]);
+
+  const displayedTableSightings = useMemo(() => {
+    const base =
+      selectedFormat === "all"
+        ? currentSightings
+        : currentSightings.filter((s) => {
+            const q = Math.max(Number(s.quantity) || 1, 1);
+            const single = Number((Number(s.unitMeasure) / q).toFixed(3));
+            return formatPackBadge(single, s.baseUnit) === selectedFormat;
+          });
+    return base.slice().reverse().slice(0, 50);
+  }, [currentSightings, selectedFormat]);
+
+  const storeRankings = useMemo(() => {
+    const storeLatest = new Map<string, SightingObservation>();
+    const storeOld1Y = new Map<string, SightingObservation>();
+    const oneYearAgoMs = latestDateMs - 365 * 24 * 60 * 60 * 1000;
+
+    currentSightings.forEach((s) => {
+      storeLatest.set(s.storeName, s);
+      if (new Date(s.purchaseDate).getTime() <= oneYearAgoMs) {
+        storeOld1Y.set(s.storeName, s);
+      }
+    });
+
+    return Array.from(storeLatest.values())
+      .map((latest) => {
+        const currentPrice =
+          priceMode === "unit" ? latest.pricePerBaseUnit : latest.unitPrice;
+        const old1Y = storeOld1Y.get(latest.storeName);
+        let diffPercent1Y: number | null = null;
+        if (old1Y) {
+          const oldP =
+            priceMode === "unit" ? old1Y.pricePerBaseUnit : old1Y.unitPrice;
+          if (oldP > 0) {
+            diffPercent1Y = ((currentPrice - oldP) / oldP) * 100;
+          }
+        }
+        const matchingAlias = aliases.find(
+          (a) => a.storeName.toLowerCase() === latest.storeName.toLowerCase()
+        );
+
+        return {
+          storeName: latest.storeName,
+          storeBrandHex: latest.storeBrandHex,
+          rawName: matchingAlias ? matchingAlias.rawAlias : latest.rawName,
+          lastSeenDate: latest.purchaseDate,
+          currentPrice,
+          packPrice: latest.unitPrice,
+          totalPrice: latest.totalPrice,
+          unitMeasure: latest.unitMeasure,
+          quantity: latest.quantity || 1,
+          diffPercent1Y,
+        };
+      })
+      .sort((a, b) => a.currentPrice - b.currentPrice);
+  }, [currentSightings, priceMode, aliases, latestDateMs]);
+
+  const cheapestNow = storeRankings[0] || null;
+  const mostExpensiveNow =
+    storeRankings.length > 1 ? storeRankings[storeRankings.length - 1] : null;
+  const storeSpread =
+    cheapestNow && mostExpensiveNow
+      ? Math.max(0, mostExpensiveNow.currentPrice - cheapestNow.currentPrice)
+      : 0;
+
+  const periodStats = useMemo(() => {
+    if (filteredSightings.length === 0) {
+      return {
+        changePercent: 0,
+        oldAvg: 0,
+        newAvg: 0,
+        oldDate: "",
+        hasHistory: false,
+      };
+    }
+    const sorted = [...filteredSightings].sort(
+      (a, b) =>
+        new Date(a.purchaseDate).getTime() - new Date(b.purchaseDate).getTime()
+    );
+    const earliestDate = sorted[0].purchaseDate.slice(0, 10);
+    const latestDate = sorted[sorted.length - 1].purchaseDate.slice(0, 10);
+
+    if (sorted.length === 1 || earliestDate === latestDate) {
+      const avg =
+        sorted.reduce(
+          (sum, s) =>
+            sum + (priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice),
+          0
+        ) / sorted.length;
+      return {
+        changePercent: 0,
+        oldAvg: avg,
+        newAvg: avg,
+        oldDate: sorted[0].purchaseDate,
+        hasHistory: false,
+      };
+    }
+
+    const earliestBatch = sorted.filter(
+      (s) => s.purchaseDate.slice(0, 10) === earliestDate
+    );
+    const latestBatch = sorted.filter(
+      (s) => s.purchaseDate.slice(0, 10) === latestDate
+    );
+
+    const oldAvg =
+      earliestBatch.reduce(
+        (sum, s) =>
+          sum + (priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice),
+        0
+      ) / earliestBatch.length;
+    const newAvg =
+      latestBatch.reduce(
+        (sum, s) =>
+          sum + (priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice),
+        0
+      ) / latestBatch.length;
+    const changePercent = oldAvg > 0 ? ((newAvg - oldAvg) / oldAvg) * 100 : 0;
+
+    return {
+      changePercent,
+      oldAvg,
+      newAvg,
+      oldDate: sorted[0].purchaseDate,
+      hasHistory: true,
+    };
+  }, [filteredSightings, priceMode]);
+
+  const allTimeStats = useMemo(() => {
+    if (currentSightings.length === 0) {
+      return { low: 0, lowDate: "", high: 0, highDate: "" };
+    }
+    let low = Infinity;
+    let lowS = currentSightings[0];
+    let high = -Infinity;
+    let highS = currentSightings[0];
+
+    currentSightings.forEach((s) => {
+      const p = priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice;
+      if (p < low) {
+        low = p;
+        lowS = s;
+      }
+      if (p > high) {
+        high = p;
+        highS = s;
+      }
+    });
+
+    return {
+      low,
+      lowDate: lowS.purchaseDate,
+      high,
+      highDate: highS.purchaseDate,
+    };
+  }, [currentSightings, priceMode]);
+
+  // Interactive Multi-Store SVG Chart computation
+  const chartModel = useMemo(() => {
+    const width = 760;
+    const height = 250;
+    const padL = 68;
+    const padR = 24;
+    const padT = 24;
+    const padB = 38;
+    const plotW = width - padL - padR;
+    const plotH = height - padT - padB;
+
+    const sorted = [...filteredSightings].sort((a, b) =>
+      a.purchaseDate.localeCompare(b.purchaseDate)
+    );
+    if (sorted.length === 0) {
+      return {
+        width,
+        height,
+        padL,
+        padR,
+        padT,
+        padB,
+        yTicks: [] as Array<{ val: number; y: number }>,
+        xDates: [] as Array<{ iso: string; label: string; x: number }>,
+        series: [] as Array<{
+          storeName: string;
+          color: string;
+          path: string;
+          points: PlottedPoint[];
+        }>,
+        refLines: [] as Array<{ id: string; x: number }>,
+      };
+    }
+
+    const timestamps = sorted.map((s) => new Date(s.purchaseDate).getTime());
+    const minT = Math.min(...timestamps);
+    const maxT = Math.max(...timestamps);
+    const spanT = maxT - minT || 1;
+
+    const values = sorted.map((s) =>
+      priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice
+    );
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const margin = (rawMax - rawMin) * 0.22 || Math.max(rawMax * 0.14, 0.2);
+    const minY = Math.max(0, rawMin - margin);
+    const maxY = rawMax + margin;
+    const spanY = maxY - minY || 1;
+
+    const xFor = (iso: string) => {
+      if (sorted.length === 1 || maxT === minT) return padL + plotW / 2;
+      const t = new Date(iso).getTime();
+      return padL + ((t - minT) / spanT) * plotW;
+    };
+    const yFor = (v: number) => padT + plotH - ((v - minY) / spanY) * plotH;
+
+    const yTicks = [0, 1, 2, 3].map((i) => {
+      const val = minY + (spanY * i) / 3;
+      return { val, y: yFor(val) };
+    });
+
+    const seenDay = new Set<string>();
+    const rawDates: Array<{ iso: string; label: string; x: number }> = [];
+    sorted.forEach((s) => {
+      const dayKey = s.purchaseDate.slice(0, 10);
+      if (!seenDay.has(dayKey)) {
+        seenDay.add(dayKey);
+        rawDates.push({
+          iso: s.purchaseDate,
+          label: formatShortDate(s.purchaseDate),
+          x: xFor(s.purchaseDate),
+        });
+      }
+    });
+
+    // Limit crowded X-axis labels so they stay clean
+    const xDates =
+      rawDates.length <= 6
+        ? rawDates
+        : rawDates.filter(
+            (_, idx) =>
+              idx === 0 ||
+              idx === rawDates.length - 1 ||
+              idx % Math.ceil(rawDates.length / 5) === 0
+          );
+
+    const byStore = new Map<string, PlottedPoint[]>();
+    sorted.forEach((s) => {
+      const val = priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice;
+      const pt: PlottedPoint = {
+        id: s.id,
+        date: s.purchaseDate,
+        iso: s.purchaseDate.slice(0, 10),
+        storeName: s.storeName,
+        storeBrandHex: s.storeBrandHex,
+        value: val,
+        packPrice: s.unitPrice,
+        totalPrice: s.totalPrice,
+        unitMeasure: s.unitMeasure,
+        quantity: s.quantity || 1,
+        x: xFor(s.purchaseDate),
+        y: yFor(val),
+      };
+      const arr = byStore.get(s.storeName) || [];
+      arr.push(pt);
+      byStore.set(s.storeName, arr);
+    });
+
+    const series = Array.from(byStore.entries()).map(([storeName, pts]) => {
+      const color = getStoreBrand(storeName, pts[0]?.storeBrandHex).color;
+      let path = "";
+      if (pts.length > 1) {
+        path = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+        for (let i = 1; i < pts.length; i++) {
+          const prev = pts[i - 1];
+          const curr = pts[i];
+          if (chartCurve === "step") {
+            path += ` L ${curr.x.toFixed(1)} ${prev.y.toFixed(1)} L ${curr.x.toFixed(1)} ${curr.y.toFixed(1)}`;
+          } else {
+            const cx = ((prev.x + curr.x) / 2).toFixed(1);
+            path += ` C ${cx} ${prev.y.toFixed(1)}, ${cx} ${curr.y.toFixed(1)}, ${curr.x.toFixed(1)} ${curr.y.toFixed(1)}`;
+          }
+        }
+      }
+      return { storeName, color, path, points: pts };
+    });
+
+    const refLines = shrinkflationIncidents
+      .filter((inc) => {
+        const ms = new Date(inc.date).getTime();
+        return ms >= minT && ms <= maxT;
+      })
+      .map((inc) => ({
+        id: inc.id,
+        x: xFor(inc.date),
+      }));
+
+    return {
+      width,
+      height,
+      padL,
+      padR,
+      padT,
+      padB,
+      yTicks,
+      xDates,
+      series,
+      refLines,
+    };
+  }, [filteredSightings, priceMode, chartCurve, shrinkflationIncidents]);
 
   const handleDeleteSighting = async (sightingId: string) => {
     setDeletingId(sightingId);
@@ -284,11 +598,11 @@ export function ProductTrackerClient({
         setCurrentSightings((prev) => prev.filter((s) => s.id !== sightingId));
         setConfirmDeleteId(null);
       } else {
-        setDeleteError(res.error || "Failed to remove observation.");
+        setDeleteError(res.error || "Could not remove this purchase.");
       }
     } catch (err: unknown) {
       setDeleteError(
-        err instanceof Error ? err.message : "Error deleting observation."
+        err instanceof Error ? err.message : "Error removing purchase."
       );
     } finally {
       setDeletingId(null);
@@ -301,7 +615,7 @@ export function ProductTrackerClient({
     setEditSightingQty((s.quantity || 1).toString());
     setEditSightingMeasure(s.unitMeasure.toString());
     setEditSightingRawName(s.rawName);
-    setEditSightingDate(s.purchaseDate.slice(0, 10));
+    setEditSightingDate(formatDateInputDDMMYYYY(s.purchaseDate));
     setSightingSaveError(null);
   };
 
@@ -312,17 +626,25 @@ export function ProductTrackerClient({
     const priceNum = parseFloat(editSightingPrice);
     const qtyNum = parseFloat(editSightingQty);
     const measureNum = parseFloat(editSightingMeasure);
+    const trimmedDate = editSightingDate.trim();
+    const parsedDateISO = trimmedDate ? parseDDMMYYYYToISO(trimmedDate) : null;
 
     if (isNaN(priceNum) || priceNum < 0) {
-      setSightingSaveError("Please enter a valid pack price (≥ 0).");
+      setSightingSaveError("Please enter a valid pack price.");
       return;
     }
     if (isNaN(qtyNum) || qtyNum <= 0) {
-      setSightingSaveError("Please enter a valid quantity (> 0).");
+      setSightingSaveError("Please enter a valid quantity.");
       return;
     }
     if (isNaN(measureNum) || measureNum <= 0) {
-      setSightingSaveError("Please enter a valid package measure / weight (> 0).");
+      setSightingSaveError("Please enter a valid pack weight or volume.");
+      return;
+    }
+    if (trimmedDate && !parsedDateISO) {
+      setSightingSaveError(
+        "Please enter a valid purchase date in DD/MM/YYYY format."
+      );
       return;
     }
 
@@ -335,7 +657,7 @@ export function ProductTrackerClient({
         quantity: qtyNum,
         unitMeasure: measureNum,
         rawName: editSightingRawName.trim(),
-        purchaseDate: editSightingDate || undefined,
+        purchaseDate: parsedDateISO || undefined,
       });
 
       if (res.success && res.updated) {
@@ -346,6 +668,7 @@ export function ProductTrackerClient({
               ? {
                   ...s,
                   unitPrice: updated.unitPrice,
+                  totalPrice: updated.totalPrice,
                   quantity: updated.quantity,
                   unitMeasure: updated.unitMeasure,
                   pricePerBaseUnit: updated.pricePerBaseUnit,
@@ -357,11 +680,11 @@ export function ProductTrackerClient({
         );
         setEditingSighting(null);
       } else {
-        setSightingSaveError(res.error || "Failed to update observation.");
+        setSightingSaveError(res.error || "Failed to update purchase.");
       }
     } catch (err: unknown) {
       setSightingSaveError(
-        err instanceof Error ? err.message : "Error updating observation."
+        err instanceof Error ? err.message : "Error updating purchase."
       );
     } finally {
       setIsSavingSighting(false);
@@ -426,10 +749,10 @@ export function ProductTrackerClient({
         setIsEditModalOpen(false);
         router.refresh();
       } else {
-        setEditError(res.error || "Failed to update product.");
+        setEditError(res.error || "Failed to update item.");
       }
     } catch (err: unknown) {
-      setEditError(err instanceof Error ? err.message : "Error saving product.");
+      setEditError(err instanceof Error ? err.message : "Error saving item.");
     } finally {
       setIsSavingProduct(false);
     }
@@ -444,7 +767,7 @@ export function ProductTrackerClient({
         barcodeOverride
       );
       if (!res.success) {
-        setNutritionNotice(res.error || "Could not fetch nutrition metadata.");
+        setNutritionNotice(res.error || "Could not fetch nutrition details.");
       } else if (!res.found || !res.nutrition) {
         setNutritionNotice(
           barcodeOverride
@@ -462,10 +785,25 @@ export function ProductTrackerClient({
           nutritionSource: res.nutrition!.nutritionSource,
           nutritionUpdatedAt: res.nutrition!.nutritionUpdatedAt,
         }));
+        setEditNutriScore(res.nutrition.nutriScore || "");
+        setEditNovaGroup(
+          res.nutrition.novaGroup ? String(res.nutrition.novaGroup) : ""
+        );
+        setEditProtein(
+          res.nutrition.proteinPer100g !== null
+            ? String(res.nutrition.proteinPer100g)
+            : ""
+        );
+        setEditKcal(
+          res.nutrition.kcalPer100g !== null
+            ? String(res.nutrition.kcalPer100g)
+            : ""
+        );
+        setEditEan(res.nutrition.ean || "");
         setNutritionNotice(
           res.matchName
-            ? `Cached from OpenFoodFacts: ${res.matchName}`
-            : "Nutrition metadata updated from OpenFoodFacts."
+            ? `Updated from OpenFoodFacts: ${res.matchName}`
+            : "Nutrition details updated from OpenFoodFacts."
         );
         router.refresh();
       }
@@ -498,615 +836,249 @@ export function ProductTrackerClient({
         setIsNormalizeModalOpen(false);
         router.refresh();
       } else {
-        setNormalizeError(res.error || "Failed to normalize product history.");
+        setNormalizeError(res.error || "Failed to update pack sizes.");
       }
     } catch (err: unknown) {
-      setNormalizeError(err instanceof Error ? err.message : "Error normalizing product history.");
+      setNormalizeError(
+        err instanceof Error ? err.message : "Error updating pack sizes."
+      );
     } finally {
       setIsNormalizing(false);
     }
   };
 
-  const unitLabel =
-    productData.baseUnit === "KG"
-      ? "€/kg"
-      : productData.baseUnit === "L"
-      ? "€/L"
-      : "€/unit";
-
-  // Reference date: the latest date in the sightings dataset
-  const latestDateMs = useMemo(() => {
-    if (currentSightings.length === 0) return Date.now();
-    return Math.max(...currentSightings.map((s) => new Date(s.purchaseDate).getTime()));
-  }, [currentSightings]);
-
-  // Filter sightings by timeframe and selected pack format
-  const filteredSightings = useMemo(() => {
-    let list = currentSightings;
-
-    if (selectedFormat !== "all") {
-      list = list.filter((s) => {
-        const q = Math.max(Number(s.quantity) || 1, 1);
-        const single = Number((Number(s.unitMeasure) / q).toFixed(3));
-        return formatPackBadge(single, s.baseUnit) === selectedFormat;
-      });
-    }
-
-    if (timeframe === "All") return list;
-
-    const daysMap: Record<Timeframe, number> = {
-      "1M": 31,
-      "3M": 92,
-      "6M": 183,
-      "1Y": 366,
-      "2Y": 732,
-      All: Infinity,
-    };
-
-    const cutoff = latestDateMs - daysMap[timeframe] * 24 * 60 * 60 * 1000;
-    return list.filter((s) => new Date(s.purchaseDate).getTime() >= cutoff);
-  }, [currentSightings, timeframe, selectedFormat, latestDateMs]);
-
-  // Sightings displayed in historical table, filtered by selected format if active
-  const displayedTableSightings = useMemo(() => {
-    if (selectedFormat === "all") return currentSightings;
-    return currentSightings.filter((s) => {
-      const q = Math.max(Number(s.quantity) || 1, 1);
-      const single = Number((Number(s.unitMeasure) / q).toFixed(3));
-      return formatPackBadge(single, s.baseUnit) === selectedFormat;
-    });
-  }, [currentSightings, selectedFormat]);
-
-  // Unique stores present in sightings
-  const uniqueStores = useMemo(() => {
-    const map = new Map<string, { name: string; brandHex: string }>();
-    currentSightings.forEach((s) => {
-      if (!map.has(s.storeName)) {
-        map.set(s.storeName, { name: s.storeName, brandHex: s.storeBrandHex });
-      }
-    });
-    return Array.from(map.values());
-  }, [currentSightings]);
-
-  // Current ranking: latest price per store
-  const storeRankings = useMemo(() => {
-    const storeLatest = new Map<string, SightingObservation>();
-    const storeOld1Y = new Map<string, SightingObservation>();
-
-    const oneYearAgoMs = latestDateMs - 365 * 24 * 60 * 60 * 1000;
-
-    // Sightings are ordered asc by date
-    currentSightings.forEach((s) => {
-      storeLatest.set(s.storeName, s);
-
-      const dMs = new Date(s.purchaseDate).getTime();
-      if (dMs <= oneYearAgoMs) {
-        storeOld1Y.set(s.storeName, s);
-      }
-    });
-
-    const rankingList = Array.from(storeLatest.values()).map((latest) => {
-      const currentPrice =
-        priceMode === "unit" ? latest.pricePerBaseUnit : latest.unitPrice;
-      const old1Y = storeOld1Y.get(latest.storeName);
-      let diff1Y: number | null = null;
-      let diffPercent1Y: number | null = null;
-
-      if (old1Y) {
-        const oldP =
-          priceMode === "unit" ? old1Y.pricePerBaseUnit : old1Y.unitPrice;
-        diff1Y = currentPrice - oldP;
-        diffPercent1Y = oldP > 0 ? (diff1Y / oldP) * 100 : null;
-      }
-
-      // Find alias if any
-      const matchingAlias = aliases.find(
-        (a) => a.storeName.toLowerCase() === latest.storeName.toLowerCase()
-      );
-
-      return {
-        storeName: latest.storeName,
-        storeBrandHex: latest.storeBrandHex,
-        rawName: matchingAlias ? matchingAlias.rawAlias : latest.rawName,
-        lastSeenDate: latest.purchaseDate,
-        currentPrice,
-        diff1Y,
-        diffPercent1Y,
-      };
-    });
-
-    rankingList.sort((a, b) => a.currentPrice - b.currentPrice);
-    return rankingList;
-  }, [currentSightings, priceMode, aliases, latestDateMs]);
-
-  // KPI 1: Cheapest Now
-  const cheapestNow = storeRankings[0] || null;
-
-  // KPI 2: Period Change over selected timeframe
-  const periodStats = useMemo(() => {
-    if (filteredSightings.length === 0) {
-      return { changePercent: 0, oldAvg: 0, newAvg: 0, hasHistory: false };
-    }
-    if (filteredSightings.length === 1) {
-      const p =
-        priceMode === "unit"
-          ? filteredSightings[0].pricePerBaseUnit
-          : filteredSightings[0].unitPrice;
-      return { changePercent: 0, oldAvg: p, newAvg: p, hasHistory: false };
-    }
-
-    const sorted = [...filteredSightings].sort(
-      (a, b) =>
-        new Date(a.purchaseDate).getTime() - new Date(b.purchaseDate).getTime()
-    );
-
-    const earliestDate = sorted[0].purchaseDate.slice(0, 10);
-    const latestDate = sorted[sorted.length - 1].purchaseDate.slice(0, 10);
-
-    if (earliestDate === latestDate) {
-      const avg =
-        sorted.reduce(
-          (sum, s) =>
-            sum + (priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice),
-          0
-        ) / sorted.length;
-      return { changePercent: 0, oldAvg: avg, newAvg: avg, hasHistory: false };
-    }
-
-    const earliestBatch = sorted.filter(
-      (s) => s.purchaseDate.slice(0, 10) === earliestDate
-    );
-    const latestBatch = sorted.filter(
-      (s) => s.purchaseDate.slice(0, 10) === latestDate
-    );
-
-    const oldAvg =
-      earliestBatch.reduce(
-        (sum, s) =>
-          sum + (priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice),
-        0
-      ) / earliestBatch.length;
-
-    const newAvg =
-      latestBatch.reduce(
-        (sum, s) =>
-          sum + (priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice),
-        0
-      ) / latestBatch.length;
-
-    const changePercent = oldAvg > 0 ? ((newAvg - oldAvg) / oldAvg) * 100 : 0;
-
-    return {
-      changePercent,
-      oldAvg,
-      newAvg,
-      hasHistory: true,
-    };
-  }, [filteredSightings, priceMode]);
-
-  // KPI 3: All-Time Low & High
-  const allTimeStats = useMemo(() => {
-    if (currentSightings.length === 0) {
-      return { low: 0, lowDate: "", high: 0, highDate: "" };
-    }
-
-    let low = Infinity;
-    let lowS = currentSightings[0];
-    let high = -Infinity;
-    let highS = currentSightings[0];
-
-    currentSightings.forEach((s) => {
-      const p = priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice;
-      if (p < low) {
-        low = p;
-        lowS = s;
-      }
-      if (p > high) {
-        high = p;
-        highS = s;
-      }
-    });
-
-    return {
-      low,
-      lowDate: lowS.purchaseDate,
-      lowStore: lowS.storeName,
-      high,
-      highDate: highS.purchaseDate,
-      highStore: highS.storeName,
-    };
-  }, [currentSightings, priceMode]);
-
-  // KPI 4: Store Spread
-  const storeSpread = useMemo(() => {
-    if (storeRankings.length < 2) return 0;
-    const cheapest = storeRankings[0].currentPrice;
-    const mostExpensive = storeRankings[storeRankings.length - 1].currentPrice;
-    return Math.max(0, mostExpensive - cheapest);
-  }, [storeRankings]);
-
-  // Transform filtered sightings for Recharts LineChart
-  const chartData = useMemo(() => {
-    // Group observations by month/date string
-    const dateMap = new Map<string, ChartPoint>();
-
-    filteredSightings.forEach((s) => {
-      const dateKey = s.purchaseDate.slice(0, 10);
-      let entry = dateMap.get(dateKey);
-      if (!entry) {
-        const dObj = new Date(s.purchaseDate);
-        const displayDate = dObj.toLocaleDateString("en-GB", {
-          day: "numeric",
-          month: "short",
-          year: "2-digit",
-        });
-        entry = { date: dateKey, displayDate, _meta: {} };
-        dateMap.set(dateKey, entry);
-      }
-      const price = priceMode === "unit" ? s.pricePerBaseUnit : s.unitPrice;
-      entry[s.storeName] = price;
-
-      const q = Math.max(Number(s.quantity) || 1, 1);
-      const single = Number((Number(s.unitMeasure) / q).toFixed(3));
-      const format = formatPackBadge(single, s.baseUnit);
-      if (!entry._meta) entry._meta = {};
-      entry._meta[s.storeName] = {
-        packPrice: s.unitPrice,
-        format,
-      };
-    });
-
-    return Array.from(dateMap.values()).sort((a, b) =>
-      String(a.date).localeCompare(String(b.date))
-    );
-  }, [filteredSightings, priceMode]);
-
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
-      {/* Top Breadcrumb & Navigation */}
-      <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-        <Link
-          href="/products"
-          className="hover:text-zinc-200 transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Products</span>
-        </Link>
-        <span>/</span>
-        <span className="text-zinc-400 truncate">{productData.category}</span>
-        <span>/</span>
-        <span className="text-emerald-400 font-semibold truncate">
-          {productData.displayName}
-        </span>
+    <div className="space-y-8">
+      {/* Top Utility Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Link
+            href="/products"
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>All products</span>
+          </Link>
+
+          {allProducts.length > 1 && (
+            <select
+              value={productData.slug}
+              onChange={(e) => router.push(`/products/${e.target.value}`)}
+              aria-label="Switch grocery item"
+              className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] max-w-[230px] cursor-pointer"
+            >
+              {allProducts.map((item) => (
+                <option key={item.slug} value={item.slug}>
+                  {item.displayName}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div
+            className="inline-flex items-center p-[3px] rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] gap-0.5"
+            role="group"
+            aria-label="Price display mode"
+          >
+            <button
+              type="button"
+              onClick={() => handlePriceModeChange("unit")}
+              className={`h-[30px] px-3 rounded-full text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                priceMode === "unit"
+                  ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
+              }`}
+            >
+              {unitNoun}
+            </button>
+            <button
+              type="button"
+              onClick={() => handlePriceModeChange("pack")}
+              className={`h-[30px] px-3 rounded-full text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                priceMode === "pack"
+                  ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
+              }`}
+            >
+              Per pack
+            </button>
+          </div>
+
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={() => setIsEditModalOpen(true)}
+                className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-subtle)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+              >
+                Edit item
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsNormalizeModalOpen(true)}
+                className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-subtle)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+              >
+                Pack sizes
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* 1. Clear Product Header */}
-      <div className="rounded-3xl border border-zinc-800/80 bg-gradient-to-b from-zinc-900/90 to-zinc-950 p-6 sm:p-8 space-y-6 shadow-xl">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700/60 text-xs font-medium whitespace-nowrap shrink-0">
-                {productData.category}
-              </span>
-              {productData.isStaple && (
-                <span className="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-semibold whitespace-nowrap shrink-0 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Everyday Staple</span>
-                </span>
-              )}
-              {isAdmin && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditModalOpen(true)}
-                    className="px-2.5 py-1 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border border-zinc-700/60 text-xs font-medium whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 transition-colors"
-                  >
-                    <Pencil className="w-3 h-3 text-emerald-400" />
-                    <span>Edit Product</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsNormalizeModalOpen(true)}
-                    className="px-2.5 py-1 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border border-zinc-700/60 text-xs font-medium whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 transition-colors"
-                  >
-                    <Scale className="w-3 h-3 text-emerald-400" />
-                    <span>Normalize Format / History</span>
-                  </button>
-                </>
-              )}
-            </div>
-
-            <h1 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
-              {productData.displayName}
-            </h1>
-            <p className="text-xs sm:text-sm text-zinc-400 max-w-2xl">
-              Multi-store historical price comparison across Spanish supermarkets with normalized{" "}
-              <strong className="text-zinc-300 font-mono font-medium">{unitLabel}</strong> unit pricing.
-            </p>
-          </div>
-
-          {/* Controls: Price Unit Toggle + Timeframe Pills */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 shrink-0">
-            {/* Unit vs Pack Mode Toggle */}
-            <div className="inline-flex rounded-xl p-1 bg-zinc-900 border border-zinc-800 shrink-0">
-              <button
-                type="button"
-                onClick={() => setPriceMode("unit")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                  priceMode === "unit"
-                    ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                {unitLabel}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPriceMode("pack")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                  priceMode === "pack"
-                    ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                Pack €
-              </button>
-            </div>
-
-            {/* Timeframe Selector Pills */}
-            <div className="inline-flex rounded-xl p-1 bg-zinc-900 border border-zinc-800 shrink-0">
-              {(["1M", "3M", "6M", "1Y", "2Y", "All"] as Timeframe[]).map((tf) => (
-                <button
-                  key={tf}
-                  type="button"
-                  onClick={() => setTimeframe(tf)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                    timeframe === tf
-                      ? "bg-zinc-800 text-emerald-400 border border-zinc-700/60 shadow-sm"
-                      : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  {tf}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* Direct Title Area & Nutrition Summary */}
+      <div className="space-y-4">
+        <div>
+          <h1 className="font-display text-[25px] sm:text-[30px] font-bold leading-tight text-[var(--text-primary)]">
+            {productData.displayName}
+          </h1>
+          <p className="mt-1.5 text-[15px] text-[var(--text-muted)]">
+            {productData.category}
+            {productData.isStaple ? " · Everyday staple" : ""}
+          </p>
         </div>
 
-        {/* 4 Summary KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
-          {/* Card 1: Cheapest Now */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-1.5">
-            <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider flex items-center justify-between">
-              <span>Cheapest Now</span>
-              {cheapestNow && (
-                <span
-                  className="px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm whitespace-nowrap"
-                  style={{ backgroundColor: cheapestNow.storeBrandHex }}
-                >
-                  {cheapestNow.storeName}
-                </span>
-              )}
-            </div>
-            <div className="text-2xl font-bold font-mono text-emerald-400 tabular-nums">
-              {cheapestNow
-                ? `${cheapestNow.currentPrice.toFixed(2)} ${priceMode === "unit" ? unitLabel : "€"}`
-                : "—"}
-            </div>
-            <div className="text-[11px] text-zinc-500 font-mono">
-              Recorded {cheapestNow ? new Date(cheapestNow.lastSeenDate).toLocaleDateString("en-GB") : "N/A"}
-            </div>
-          </div>
+        {!NON_FOOD_CATEGORIES.has(productData.category) &&
+          (() => {
+            const nsBadge = getNutriScoreBadgeStyle(productData.nutriScore);
+            const novaMeta = getNovaGroupMeta(productData.novaGroup);
+            const cheapestNormalizedPrice =
+              priceMode === "unit" && cheapestNow
+                ? cheapestNow.currentPrice
+                : null;
+            const proteinPerEuro =
+              cheapestNormalizedPrice !== null
+                ? computeProteinPerEuro(
+                    productData.proteinPer100g,
+                    cheapestNormalizedPrice,
+                    productData.baseUnit
+                  )
+                : null;
+            const kcalPerEuro =
+              cheapestNormalizedPrice !== null
+                ? computeKcalPerEuro(
+                    productData.kcalPer100g,
+                    cheapestNormalizedPrice,
+                    productData.baseUnit
+                  )
+                : null;
+            const hasNutrition = Boolean(
+              nsBadge ||
+                novaMeta ||
+                (productData.proteinPer100g !== null &&
+                  productData.proteinPer100g !== undefined) ||
+                (productData.kcalPer100g !== null &&
+                  productData.kcalPer100g !== undefined)
+            );
 
-          {/* Card 2: Period Change */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-1.5">
-            <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider flex items-center justify-between">
-              <span>Period Change</span>
-              <span className="text-zinc-500 font-mono text-[10px]">({timeframe})</span>
-            </div>
-            {periodStats.hasHistory ? (
-              <>
-                <div
-                  className={`text-2xl font-bold font-mono tabular-nums flex items-center gap-1.5 ${
-                    periodStats.changePercent < 0
-                      ? "text-emerald-400"
-                      : periodStats.changePercent > 0
-                      ? "text-rose-400"
-                      : "text-zinc-300"
-                  }`}
-                >
-                  {periodStats.changePercent < 0 && <TrendingDown className="w-5 h-5 shrink-0" />}
-                  {periodStats.changePercent > 0 && <TrendingUp className="w-5 h-5 shrink-0" />}
-                  <span>
-                    {periodStats.changePercent > 0 ? "+" : ""}
-                    {periodStats.changePercent.toFixed(1)}%
+            if (!hasNutrition && !isAuthenticated) return null;
+
+            return (
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-[13px]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-[var(--text-muted)]">
+                    <Leaf className="w-4 h-4 text-[var(--primary)] shrink-0" />
+                    <span>Nutrition</span>
                   </span>
-                </div>
-                <div className="text-[11px] text-zinc-500 font-mono truncate">
-                  {periodStats.oldAvg.toFixed(2)} → {periodStats.newAvg.toFixed(2)}{" "}
-                  {priceMode === "unit" ? unitLabel : "€"}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-2xl font-bold font-mono tabular-nums text-zinc-400">
-                  {periodStats.newAvg > 0 ? `${periodStats.newAvg.toFixed(2)} ${priceMode === "unit" ? unitLabel : "€"}` : "—"}
-                </div>
-                <div className="text-[11px] text-zinc-500 font-mono truncate">
-                  Single observation recorded
-                </div>
-              </>
-            )}
-          </div>
 
-          {/* Card 3: All-Time Low / High */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-1.5">
-            <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-              All-Time Low / High
-            </div>
-            <div className="text-sm font-mono space-y-0.5">
-              <div className="flex items-center justify-between">
-                <span className="text-emerald-400 font-bold">
-                  Low: {allTimeStats.low.toFixed(2)} {priceMode === "unit" ? unitLabel : "€"}
-                </span>
-                <span className="text-[10px] text-zinc-500">
-                  {allTimeStats.lowDate ? new Date(allTimeStats.lowDate).toLocaleDateString("en-GB", { month: "short", year: "2-digit" }) : ""}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-rose-400 font-bold">
-                  High: {allTimeStats.high.toFixed(2)} {priceMode === "unit" ? unitLabel : "€"}
-                </span>
-                <span className="text-[10px] text-zinc-500">
-                  {allTimeStats.highDate ? new Date(allTimeStats.highDate).toLocaleDateString("en-GB", { month: "short", year: "2-digit" }) : ""}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Card 4: Store Spread */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-1.5">
-            <div className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-              Store Spread
-            </div>
-            <div className="text-2xl font-bold font-mono text-white tabular-nums">
-              {storeSpread.toFixed(2)} {priceMode === "unit" ? unitLabel : "€"}
-            </div>
-            <div className="text-[11px] text-zinc-500 font-mono">
-              Cheapest vs most expensive now
-            </div>
-          </div>
-        </div>
-
-        {/* Unobtrusive Nutrition & Protein Value Bar (Food products only) */}
-        {!NON_FOOD_CATEGORIES.has(productData.category) && (() => {
-          const nsBadge = getNutriScoreBadgeStyle(productData.nutriScore);
-          const novaMeta = getNovaGroupMeta(productData.novaGroup);
-          const cheapestNormalizedPrice =
-            priceMode === "unit" && cheapestNow ? cheapestNow.currentPrice : null;
-          const proteinPerEuro =
-            cheapestNormalizedPrice !== null
-              ? computeProteinPerEuro(
-                  productData.proteinPer100g,
-                  cheapestNormalizedPrice,
-                  productData.baseUnit
-                )
-              : null;
-          const kcalPerEuro =
-            cheapestNormalizedPrice !== null
-              ? computeKcalPerEuro(
-                  productData.kcalPer100g,
-                  cheapestNormalizedPrice,
-                  productData.baseUnit
-                )
-              : null;
-          const hasNutrition = Boolean(
-            nsBadge ||
-              novaMeta ||
-              (productData.proteinPer100g !== null &&
-                productData.proteinPer100g !== undefined) ||
-              (productData.kcalPer100g !== null &&
-                productData.kcalPer100g !== undefined)
-          );
-
-          if (!hasNutrition && !isAuthenticated) return null;
-
-          return (
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/60 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-zinc-400">
-                  <Leaf className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>Nutrition</span>
-                </span>
-
-                {nsBadge && (
-                  <span
-                    className={`px-2 py-0.5 rounded-md border font-mono text-[11px] font-bold whitespace-nowrap shrink-0 ${nsBadge.className}`}
-                  >
-                    Nutri-Score {nsBadge.letter}
-                  </span>
-                )}
-
-                {novaMeta && (
-                  <span
-                    className={`px-2 py-0.5 rounded-md border font-mono text-[11px] font-bold whitespace-nowrap shrink-0 ${novaMeta.className}`}
-                    title={novaMeta.label}
-                  >
-                    {novaMeta.shortLabel}
-                  </span>
-                )}
-
-                {productData.proteinPer100g !== null &&
-                  productData.proteinPer100g !== undefined && (
-                    <span className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-[11px] text-zinc-200 whitespace-nowrap shrink-0 tabular-nums">
-                      Protein: <strong>{productData.proteinPer100g}g</strong>/100g
+                  {nsBadge && (
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full border text-[13px] font-semibold whitespace-nowrap shrink-0 ${nsBadge.className}`}
+                    >
+                      Nutri-Score {nsBadge.letter}
                     </span>
                   )}
 
-                {productData.kcalPer100g !== null &&
-                  productData.kcalPer100g !== undefined && (
-                    <span className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-[11px] text-zinc-300 whitespace-nowrap shrink-0 tabular-nums">
-                      {productData.kcalPer100g} kcal/100g
+                  {novaMeta && (
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full border text-[13px] font-semibold whitespace-nowrap shrink-0 ${novaMeta.className}`}
+                      title={novaMeta.label}
+                    >
+                      {novaMeta.shortLabel}
                     </span>
                   )}
 
-                {proteinPerEuro !== null && (
-                  <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 font-mono text-[11px] font-bold text-emerald-400 whitespace-nowrap shrink-0 tabular-nums">
-                    {proteinPerEuro.toFixed(1)} g protein / €
-                    {kcalPerEuro ? ` · ${kcalPerEuro} kcal/€` : ""}
-                  </span>
+                  {productData.proteinPer100g !== null &&
+                    productData.proteinPer100g !== undefined && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] text-[13px] text-[var(--text-primary)] whitespace-nowrap shrink-0 tabular-nums">
+                        Protein:{" "}
+                        <strong>
+                          {productData.proteinPer100g
+                            .toFixed(1)
+                            .replace(".", ",")}
+                          g
+                        </strong>
+                        /100g
+                      </span>
+                    )}
+
+                  {productData.kcalPer100g !== null &&
+                    productData.kcalPer100g !== undefined && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] text-[13px] text-[var(--text-muted)] whitespace-nowrap shrink-0 tabular-nums">
+                        {Math.round(productData.kcalPer100g)} kcal/100g
+                      </span>
+                    )}
+
+                  {proteinPerEuro !== null && (
+                    <span className="px-2.5 py-0.5 rounded-full bg-[var(--positive-tint)] border border-[var(--positive)]/30 text-[13px] font-semibold text-[var(--positive)] whitespace-nowrap shrink-0 tabular-nums">
+                      {proteinPerEuro.toFixed(1).replace(".", ",")} g protein / €
+                      {kcalPerEuro ? ` · ${kcalPerEuro} kcal/€` : ""}
+                    </span>
+                  )}
+
+                  {productData.ean && (
+                    <span className="px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] text-[13px] text-[var(--text-muted)] whitespace-nowrap shrink-0 tabular-nums">
+                      EAN {productData.ean}
+                    </span>
+                  )}
+
+                  {!hasNutrition && (
+                    <span className="text-[var(--text-muted)]">
+                      No cached nutritional info yet.
+                    </span>
+                  )}
+                </div>
+
+                {isAuthenticated && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void handleFetchNutrition()}
+                      disabled={isFetchingNutrition}
+                      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-page)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 text-[var(--primary)] shrink-0 ${
+                          isFetchingNutrition ? "animate-spin" : ""
+                        }`}
+                      />
+                      <span>
+                        {hasNutrition ? "Refresh nutrition" : "Fetch nutrition"}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBarcodeModalOpen(true)}
+                      disabled={isFetchingNutrition}
+                      title="Scan barcode or enter EAN to fetch OpenFoodFacts entry"
+                      aria-label="Scan barcode for product nutrition"
+                      className="w-8 h-8 rounded-full border border-[var(--border)] bg-[var(--bg-page)] hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--primary)] inline-flex items-center justify-center whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      <ScanBarcode className="w-4 h-4 shrink-0" />
+                    </button>
+                  </div>
                 )}
 
-                {productData.ean && (
-                  <span className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 font-mono text-[10px] text-zinc-400 whitespace-nowrap shrink-0 tabular-nums">
-                    EAN {productData.ean}
-                  </span>
-                )}
-
-                {!hasNutrition && (
-                  <span className="text-zinc-500 font-mono text-[11px]">
-                    No cached nutritional metadata yet.
-                  </span>
+                {nutritionNotice && (
+                  <div className="w-full text-[13px] text-[var(--text-muted)] pt-2 border-t border-[var(--border)]">
+                    {nutritionNotice}
+                  </div>
                 )}
               </div>
-
-              {isAuthenticated && (
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => void handleFetchNutrition()}
-                    disabled={isFetchingNutrition}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-emerald-400 text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
-                  >
-                    <RefreshCw
-                      className={`w-3 h-3 shrink-0 ${
-                        isFetchingNutrition ? "animate-spin text-emerald-400" : ""
-                      }`}
-                    />
-                    <span>{hasNutrition ? "Refresh OFF" : "Fetch Nutrition"}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setBarcodeModalOpen(true)}
-                    disabled={isFetchingNutrition}
-                    title="Scan barcode / EAN to match exact OpenFoodFacts entry"
-                    aria-label="Scan barcode for product nutrition"
-                    className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-emerald-400 whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
-                  >
-                    <ScanBarcode className="w-3.5 h-3.5 shrink-0" />
-                  </button>
-                </div>
-              )}
-
-              {nutritionNotice && (
-                <div className="w-full text-[11px] font-mono text-zinc-400 pt-1 border-t border-zinc-800/60">
-                  {nutritionNotice}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+            );
+          })()}
       </div>
 
       <BarcodeScannerModal
@@ -1116,84 +1088,218 @@ export function ProductTrackerClient({
           setBarcodeModalOpen(false);
           void handleFetchNutrition(code);
         }}
-        title="Match Product by Barcode"
-        subtitle="Fetch exact nutrition metadata & pack size via OpenFoodFacts"
+        title="Match product by barcode"
+        subtitle="Look up exact nutrition details and pack size via OpenFoodFacts"
       />
 
-      {/* ⚠️ SHRINKFLATION ALERT BANNER */}
-      {shrinkflationIncidents && shrinkflationIncidents.length > 0 && (
-        <div className="space-y-3">
-          {shrinkflationIncidents.map((inc) => (
-            <div
-              key={inc.id}
-              className="rounded-3xl border border-amber-500/40 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-transparent p-5 sm:p-6 text-amber-200 space-y-3 shadow-xl"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">⚠️</span>
-                  <span className="text-sm font-bold text-amber-300 tracking-wide uppercase font-mono">
-                    Shrinkflation Detected
-                  </span>
-                  <span
-                    className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white shadow-sm whitespace-nowrap shrink-0"
-                    style={{ backgroundColor: inc.storeHex }}
-                  >
-                    {inc.storeName}
+      {/* 4-Column Flat Summary Strip */}
+      <section
+        aria-label="Price summary"
+        className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] grid grid-cols-2 lg:grid-cols-4 py-4 sm:py-5"
+      >
+        <div className="px-4 sm:px-5 py-1">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Cheapest right now
+          </div>
+          <div className="font-display text-2xl font-bold tabular-nums text-[var(--text-primary)] mt-1">
+            {cheapestNow ? formatValue(cheapestNow.currentPrice) : "—"}
+          </div>
+          {cheapestNow && (
+            <div className="flex items-start gap-1.5 text-[13px] text-[var(--text-muted)] tabular-nums leading-snug mt-1.5">
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0 mt-1"
+                style={{
+                  backgroundColor: getStoreBrand(
+                    cheapestNow.storeName,
+                    cheapestNow.storeBrandHex
+                  ).color,
+                }}
+              />
+              <span>
+                {cheapestNow.storeName} ·{" "}
+                <span className="sm:hidden">
+                  {formatShortDate(cheapestNow.lastSeenDate)}
+                </span>
+                <span className="hidden sm:inline">
+                  {formatDate(cheapestNow.lastSeenDate)}
+                </span>
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 sm:px-5 py-1 border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Price change ({timeframe})
+          </div>
+          <div
+            className={`font-display text-2xl font-bold tabular-nums mt-1 ${
+              periodStats.hasHistory
+                ? periodStats.changePercent < -0.05
+                  ? "text-[var(--positive)]"
+                  : periodStats.changePercent > 0.05
+                    ? "text-[var(--negative)]"
+                    : "text-[var(--text-primary)]"
+                : "text-[var(--text-primary)]"
+            }`}
+          >
+            {periodStats.hasHistory
+              ? formatPercent(periodStats.changePercent)
+              : formatValue(periodStats.newAvg)}
+          </div>
+          <div className="text-[13px] text-[var(--text-muted)] tabular-nums mt-1.5">
+            {periodStats.hasHistory
+              ? `${periodStats.changePercent <= 0 ? "Down from" : "Up from"} ${formatValue(periodStats.oldAvg)} (${formatShortDate(periodStats.oldDate)})`
+              : "Single recorded trip"}
+          </div>
+        </div>
+
+        <div className="px-4 sm:px-5 py-1 pt-4 lg:pt-1 border-t lg:border-t-0 lg:border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Low and high
+          </div>
+          <div className="font-display text-xl sm:text-2xl font-bold tabular-nums text-[var(--text-primary)] mt-1">
+            {currentSightings.length > 0
+              ? formatPriceRange(
+                  allTimeStats.low,
+                  allTimeStats.high,
+                  priceMode,
+                  productData.baseUnit
+                )
+              : "—"}
+          </div>
+          <div className="text-[13px] text-[var(--text-muted)] tabular-nums mt-1.5">
+            {allTimeStats.lowDate && allTimeStats.highDate
+              ? `${formatShortDate(allTimeStats.lowDate)} and ${formatShortDate(allTimeStats.highDate)}`
+              : "No history yet"}
+          </div>
+        </div>
+
+        <div className="px-4 sm:px-5 py-1 pt-4 lg:pt-1 border-t lg:border-t-0 border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Store difference
+          </div>
+          <div className="font-display text-2xl font-bold tabular-nums text-[var(--text-primary)] mt-1">
+            {formatValue(storeSpread)}
+          </div>
+          <div className="text-[13px] text-[var(--text-muted)] leading-snug mt-1.5">
+            {cheapestNow && mostExpensiveNow
+              ? `Between ${cheapestNow.storeName} and ${mostExpensiveNow.storeName}`
+              : cheapestNow
+                ? `Only tracked at ${cheapestNow.storeName}`
+                : "No stores yet"}
+          </div>
+        </div>
+      </section>
+
+      {/* Pack Size Reduction Alert (Shrinkflation) */}
+      {shrinkflationIncidents.length > 0 && (
+        <section className="space-y-3" aria-label="Pack size alerts">
+          {shrinkflationIncidents.map((inc) => {
+            const brand = getStoreBrand(inc.storeName, inc.storeHex);
+            return (
+              <div
+                key={inc.id}
+                className="rounded-2xl border border-[var(--border)] bg-[var(--accent-tint)] p-5 space-y-2.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-semibold text-[15px] text-[var(--text-primary)]">
+                    <AlertTriangle className="w-4 h-4 text-[var(--accent)] shrink-0" />
+                    <span>Smaller pack size noticed</span>
+                    <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--text-muted)]">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: brand.color }}
+                      />
+                      <span>{inc.storeName}</span>
+                    </span>
+                  </div>
+                  <span className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                    {formatDate(inc.date)}
                   </span>
                 </div>
-                <span className="text-xs font-mono text-amber-300/80">
-                  {new Date(inc.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-                </span>
+                <p className="text-[15px] text-[var(--text-primary)] leading-relaxed">
+                  Pack size dropped from{" "}
+                  <strong>
+                    {formatMeasureText(inc.oldMeasure, inc.baseUnit)}
+                  </strong>{" "}
+                  to{" "}
+                  <strong>
+                    {formatMeasureText(inc.newMeasure, inc.baseUnit)}
+                  </strong>{" "}
+                  ({formatPercent(-inc.percentMeasureReduction)}) while the shelf
+                  price went from {formatCurrency(inc.oldUnitPrice)} to{" "}
+                  {formatCurrency(inc.newUnitPrice)}. That raises the unit price
+                  from{" "}
+                  <span className="tabular-nums">
+                    {formatUnitPrice(inc.oldNormPrice, inc.baseUnit)}
+                  </span>{" "}
+                  to{" "}
+                  <strong className="text-[var(--negative)] tabular-nums">
+                    {formatUnitPrice(inc.newNormPrice, inc.baseUnit)} (
+                    {formatPercent(inc.percentNormIncrease)})
+                  </strong>
+                  .
+                </p>
               </div>
-
-              <p className="text-xs sm:text-sm text-amber-100 leading-relaxed">
-                Shrinkflation recorded at <strong>{inc.storeName}</strong> on{" "}
-                <strong>{new Date(inc.date).toLocaleDateString("en-GB")}</strong>: package size was reduced from{" "}
-                <strong className="underline decoration-amber-400 font-mono">{formatMeasure(inc.oldMeasure, inc.baseUnit)}</strong> to{" "}
-                <strong className="underline decoration-amber-400 font-mono">{formatMeasure(inc.newMeasure, inc.baseUnit)}</strong>{" "}
-                (-{inc.percentMeasureReduction}%) while keeping a similar pack price (
-                <span className="font-mono">€{inc.oldUnitPrice.toFixed(2)} → €{inc.newUnitPrice.toFixed(2)}</span>), causing a stealth price surge of{" "}
-                <strong className="text-rose-300 font-mono font-bold">+{inc.percentNormIncrease}%</strong> per {inc.baseUnit.toLowerCase()}.
-              </p>
-
-              <div className="flex flex-wrap items-center gap-2 pt-1 text-xs font-mono">
-                <span className="px-3 py-1 rounded-xl bg-zinc-950/70 border border-amber-500/30 text-zinc-300 whitespace-nowrap shrink-0">
-                  Pack: {formatMeasure(inc.oldMeasure, inc.baseUnit)} → {formatMeasure(inc.newMeasure, inc.baseUnit)} (-{inc.percentMeasureReduction}%)
-                </span>
-                <span className="px-3 py-1 rounded-xl bg-zinc-950/70 border border-amber-500/30 text-zinc-300 whitespace-nowrap shrink-0">
-                  Pack price: €{inc.oldUnitPrice.toFixed(2)} → €{inc.newUnitPrice.toFixed(2)}
-                </span>
-                <span className="px-3 py-1 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold whitespace-nowrap shrink-0">
-                  Normalized price: €{inc.oldNormPrice.toFixed(2)} → €{inc.newNormPrice.toFixed(2)}/{inc.baseUnit.toLowerCase()} (+{inc.percentNormIncrease}%)
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
+            );
+          })}
+        </section>
       )}
 
-      {/* 2. Interactive Multi-Store Price History Chart (Recharts) */}
-      <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/40 p-6 sm:p-8 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
-          <div className="space-y-0.5">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Scale className="w-5 h-5 text-emerald-400" />
-              <span>Multi-Store Price Trajectory ({timeframe})</span>
+      {/* Interactive Multi-Store SVG Chart */}
+      <section
+        aria-labelledby="price-chart-heading"
+        className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 sm:p-6 space-y-4"
+      >
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+          <div>
+            <h2
+              id="price-chart-heading"
+              className="font-display text-[18px] font-semibold text-[var(--text-primary)]"
+            >
+              Price over time
             </h2>
-            <p className="text-xs text-zinc-400">
-              Continuous price evolution plotted from confirmed grocery receipts.
+            <p className="text-[13px] text-[var(--text-muted)] mt-0.5">
+              Hover or tap any point to inspect the receipt price. Click a store
+              below to highlight it.
             </p>
           </div>
 
-          <div className="flex items-center gap-3 text-xs font-mono text-zinc-400">
-            <div className="inline-flex rounded-lg p-0.5 bg-zinc-950 border border-zinc-800 shrink-0">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div
+              className="inline-flex items-center p-[3px] rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] gap-0.5"
+              role="group"
+              aria-label="Timeframe"
+            >
+              {(["6M", "1Y", "2Y", "All"] as Timeframe[]).map((tf) => (
+                <button
+                  key={tf}
+                  type="button"
+                  onClick={() => setTimeframe(tf)}
+                  className={`h-[30px] px-3 rounded-full text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    timeframe === tf
+                      ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
+
+            <div
+              className="inline-flex items-center p-[3px] rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] gap-0.5"
+              role="group"
+              aria-label="Line style"
+            >
               <button
                 type="button"
                 onClick={() => setChartCurve("step")}
-                className={`px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap transition-all ${
+                className={`h-[30px] px-3 rounded-full text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   chartCurve === "step"
-                    ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                    : "text-zinc-400 hover:text-zinc-200"
+                    ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
                 }`}
               >
                 Step
@@ -1201,473 +1307,637 @@ export function ProductTrackerClient({
               <button
                 type="button"
                 onClick={() => setChartCurve("smooth")}
-                className={`px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap transition-all ${
+                className={`h-[30px] px-3 rounded-full text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   chartCurve === "smooth"
-                    ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                    : "text-zinc-400 hover:text-zinc-200"
+                    ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
                 }`}
               >
                 Smooth
               </button>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span>Range:</span>
-              <span className="text-emerald-400 font-semibold">{timeframe}</span>
-            </div>
           </div>
         </div>
 
-        {/* Format Filter Pills (when 2+ distinct pack sizes exist) */}
         {availableFormats.length >= 2 && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 pb-1 border-b border-zinc-800/60">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-mono text-zinc-500 uppercase tracking-wider mr-1">
-                Pack Format:
-              </span>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="text-[13px] text-[var(--text-muted)]">
+              Pack size:
+            </span>
+            <div
+              className="inline-flex items-center p-[3px] rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] gap-0.5 flex-wrap"
+              role="group"
+              aria-label="Filter by pack size"
+            >
               <button
                 type="button"
                 onClick={() => setSelectedFormat("all")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
+                className={`h-[30px] px-3 rounded-full text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   selectedFormat === "all"
-                    ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                    : "bg-zinc-950 text-zinc-400 hover:text-zinc-200 border border-zinc-800"
+                    ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
                 }`}
               >
-                All formats ({unitLabel})
+                All sizes
               </button>
               {availableFormats.map((f) => (
                 <button
                   key={f.label}
                   type="button"
                   onClick={() => setSelectedFormat(f.label)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
+                  className={`h-[30px] px-3 rounded-full text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     selectedFormat === f.label
-                      ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                      : "bg-zinc-950 text-zinc-400 hover:text-zinc-200 border border-zinc-800"
+                      ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
                   }`}
                 >
-                  {f.label}{" "}
-                  <span className="text-[10px] opacity-70 font-mono">({f.count})</span>
+                  {f.label} ({f.count})
                 </button>
               ))}
             </div>
-
             {priceMode === "pack" && selectedFormat === "all" && (
-              <div className="text-[11px] text-amber-400/90 font-mono flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-lg whitespace-nowrap shrink-0">
-                <span>⚠️ Select a specific format to compare Pack € without mixing sizes</span>
-              </div>
+              <span className="text-[13px] text-[var(--accent)] font-medium">
+                Select a pack size to compare pack prices fairly
+              </span>
             )}
           </div>
         )}
 
-        {/* Chart View */}
-        <div className="h-80 w-full pt-4">
-          {mounted ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                <XAxis
-                  dataKey="displayDate"
-                  stroke="#71717a"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={{ stroke: "#3f3f46" }}
-                />
-                <YAxis
-                  stroke="#71717a"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={{ stroke: "#3f3f46" }}
-                  tickFormatter={(val: number | string) => `€${Number(val).toFixed(2)}`}
-                  domain={[0, "auto"]}
-                />
-                <Tooltip
-                  content={({ active, payload, label }: TooltipContentProps) => {
-                    if (!active || !payload || !payload.length) return null;
-                    const pointMeta =
-                      (payload[0]?.payload as ChartPoint | undefined)?._meta || {};
-                    return (
-                      <div className="rounded-xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-md p-3.5 shadow-2xl space-y-2 text-xs">
-                        <div className="font-semibold text-zinc-200 border-b border-zinc-800 pb-1.5 flex items-center justify-between gap-3">
-                          <span>{label}</span>
-                          {selectedFormat !== "all" && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-emerald-400 border border-zinc-700/60 whitespace-nowrap shrink-0">
-                              {selectedFormat}
-                            </span>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          {payload.map((entry) => {
-                            const meta = pointMeta[String(entry.name)];
-                            return (
-                              <div
-                                key={entry.name}
-                                className="space-y-0.5 font-mono text-xs border-b border-zinc-900/60 last:border-0 pb-1.5 last:pb-0"
-                              >
-                                <div className="flex items-center justify-between gap-4">
-                                  <div className="flex items-center gap-1.5">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                                      style={{ backgroundColor: entry.color }}
-                                    />
-                                    <span className="text-zinc-300 font-semibold">{entry.name}</span>
-                                  </div>
-                                  <span className="font-bold text-white tabular-nums">
-                                    €{Number(entry.value).toFixed(2)}{" "}
-                                    {priceMode === "unit" ? unitLabel : "€"}
-                                  </span>
-                                </div>
-                                {meta && (
-                                  <div className="flex items-center justify-between text-[10px] text-zinc-400 pl-4">
-                                    <span className="text-zinc-500">{meta.format}</span>
-                                    <span>Pack: €{meta.packPrice.toFixed(2)}</span>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  }}
-                />
-                <Legend
-                  wrapperStyle={{ paddingTop: "12px", fontSize: "12px" }}
-                  iconType="circle"
-                />
-                {shrinkflationIncidents.map((inc) => {
-                  const incDateKey = inc.date.slice(0, 10);
-                  const matchingPoint = chartData.find((p) => p.date === incDateKey);
-                  if (!matchingPoint) return null;
-                  return (
-                    <ReferenceLine
-                      key={`ref-${inc.id}`}
-                      x={String(matchingPoint.displayDate)}
-                      stroke="#f59e0b"
-                      strokeDasharray="4 4"
-                      strokeWidth={1.5}
-                      label={{
-                        value: "⚠️ Shrinkflation",
-                        fill: "#f59e0b",
-                        fontSize: 10,
-                        position: "top",
-                        offset: 5,
-                      }}
+        <div
+          className="relative w-full"
+          onMouseLeave={() => setHoveredPoint(null)}
+        >
+          {chartModel.series.length === 0 ? (
+            <div className="py-12 text-center text-[13px] text-[var(--text-muted)]">
+              No prices recorded in this timeframe. Try choosing a longer range.
+            </div>
+          ) : (
+            <div className="w-full overflow-x-auto no-scrollbar">
+              <svg
+                viewBox={`0 0 ${chartModel.width} ${chartModel.height}`}
+                className="w-full min-w-[660px] h-[250px] block select-none overflow-visible"
+                role="img"
+                aria-label={`Price over time chart for ${productData.displayName}`}
+              >
+                {chartModel.yTicks.map((tk, i) => (
+                  <g key={i}>
+                    <line
+                      x1={chartModel.padL}
+                      y1={tk.y}
+                      x2={chartModel.width - chartModel.padR}
+                      y2={tk.y}
+                      stroke="var(--border)"
+                      strokeWidth="1"
+                      strokeDasharray={i === 0 ? undefined : "3 3"}
                     />
-                  );
-                })}
-                {uniqueStores.map((store) => (
-                  <Line
-                    key={store.name}
-                    type={chartCurve === "step" ? "stepAfter" : "monotone"}
-                    dataKey={store.name}
-                    stroke={store.brandHex}
-                    strokeWidth={2.5}
-                    dot={{ r: 4, strokeWidth: 1, fill: store.brandHex }}
-                    activeDot={{ r: 6, strokeWidth: 2 }}
-                    connectNulls
+                    <text
+                      x={chartModel.padL - 10}
+                      y={tk.y + 4}
+                      textAnchor="end"
+                      fill="var(--text-muted)"
+                      fontSize="14"
+                    >
+                      {formatCurrency(tk.val)}
+                    </text>
+                  </g>
+                ))}
+
+                {chartModel.refLines.map((rl) => (
+                  <line
+                    key={rl.id}
+                    x1={rl.x}
+                    y1={chartModel.padT}
+                    x2={rl.x}
+                    y2={chartModel.height - chartModel.padB}
+                    stroke="var(--accent)"
+                    strokeWidth="1.5"
+                    strokeDasharray="4 4"
                   />
                 ))}
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-full w-full flex items-center justify-center text-xs text-zinc-500 font-mono animate-pulse">
-              Loading price history chart...
+
+                {chartModel.xDates.map((d, idx) => {
+                  const anchor =
+                    chartModel.xDates.length === 1
+                      ? "middle"
+                      : idx === 0
+                        ? "start"
+                        : idx === chartModel.xDates.length - 1
+                          ? "end"
+                          : "middle";
+                  return (
+                    <text
+                      key={d.iso}
+                      x={d.x}
+                      y={chartModel.height - 10}
+                      textAnchor={anchor}
+                      fill="var(--text-muted)"
+                      fontSize="14"
+                    >
+                      {d.label}
+                    </text>
+                  );
+                })}
+
+                {chartModel.series.map((s) => {
+                  const dimmed =
+                    isolatedStore !== null && isolatedStore !== s.storeName;
+                  const opacity = dimmed ? 0.2 : 1;
+                  return (
+                    <g key={s.storeName} opacity={opacity}>
+                      {s.path && (
+                        <path
+                          d={s.path}
+                          fill="none"
+                          stroke={s.color}
+                          strokeWidth="2.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      )}
+                      {s.points.map((pt) => (
+                        <g
+                          key={pt.id}
+                          tabIndex={0}
+                          role="button"
+                          aria-label={`${pt.storeName} on ${formatDate(pt.date)}: ${formatValue(pt.value)}`}
+                          onMouseEnter={() => setHoveredPoint(pt)}
+                          onFocus={() => setHoveredPoint(pt)}
+                          onClick={() => setHoveredPoint(pt)}
+                          className="cursor-pointer"
+                        >
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="14"
+                            fill="transparent"
+                          />
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="5.5"
+                            fill="var(--bg-card)"
+                            stroke={s.color}
+                            strokeWidth="2.6"
+                          />
+                        </g>
+                      ))}
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+          )}
+
+          {hoveredPoint && (
+            <div className="mt-3 sm:mt-0 sm:absolute sm:top-2 sm:right-2 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] px-3.5 py-2.5 shadow-[var(--shadow-soft)] text-[13px] min-w-[190px] z-10">
+              <div className="flex items-center justify-between gap-3 font-semibold text-[var(--text-primary)] mb-1">
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{
+                      backgroundColor: getStoreBrand(
+                        hoveredPoint.storeName,
+                        hoveredPoint.storeBrandHex
+                      ).color,
+                    }}
+                  />
+                  <span>{hoveredPoint.storeName}</span>
+                </span>
+                <span className="font-normal text-[var(--text-muted)] tabular-nums">
+                  {formatDate(hoveredPoint.date)}
+                </span>
+              </div>
+              <div className="font-bold text-[15px] tabular-nums text-[var(--text-primary)]">
+                {formatValue(hoveredPoint.value)}
+              </div>
+              <div className="text-[var(--text-muted)] tabular-nums">
+                Paid {formatCurrency(hoveredPoint.totalPrice)} for{" "}
+                {formatLineMeasure(
+                  hoveredPoint.unitMeasure,
+                  hoveredPoint.quantity,
+                  productData.baseUnit
+                )}
+              </div>
             </div>
           )}
         </div>
-      </div>
 
-      {/* 3. Current Price by Supermarket (Ranked List) */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <StoreIcon className="w-4 h-4 text-emerald-400" />
-              <span>Current Price by Supermarket (Ranked)</span>
-            </h2>
-            <p className="text-xs text-zinc-400">
-              Ranked from cheapest to most expensive across stores with recent confirmed purchases.
-            </p>
+        {/* Store Legend */}
+        {chartModel.series.length > 0 && (
+          <div
+            role="group"
+            aria-label="Highlight supermarket series"
+            className="flex items-center gap-2.5 flex-wrap pt-3 border-t border-[var(--border)]"
+          >
+            {chartModel.series.map((s) => {
+              const isIso = isolatedStore === s.storeName;
+              const isDim = isolatedStore !== null && !isIso;
+              return (
+                <button
+                  key={s.storeName}
+                  type="button"
+                  aria-pressed={isIso}
+                  onClick={() =>
+                    setIsolatedStore((prev) =>
+                      prev === s.storeName ? null : s.storeName
+                    )
+                  }
+                  className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-[13px] transition-colors cursor-pointer ${
+                    isIso
+                      ? "bg-[var(--bg-subtle)] border-[var(--border-strong)] font-semibold text-[var(--text-primary)]"
+                      : "border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] font-medium"
+                  } ${isDim ? "opacity-45" : ""}`}
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: s.color }}
+                  />
+                  <span>{s.storeName}</span>
+                </button>
+              );
+            })}
+            {isolatedStore && (
+              <button
+                type="button"
+                onClick={() => setIsolatedStore(null)}
+                className="ml-auto text-[13px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                Show all stores
+              </button>
+            )}
           </div>
+        )}
+      </section>
+
+      {/* Where it's cheapest right now */}
+      <section aria-labelledby="cheapest-stores-heading" className="space-y-3">
+        <div>
+          <h2
+            id="cheapest-stores-heading"
+            className="font-display text-[18px] font-semibold text-[var(--text-primary)]"
+          >
+            Where it&apos;s cheapest right now
+          </h2>
+          <p className="text-[13px] text-[var(--text-muted)] mt-0.5">
+            Ranked from lowest to highest based on your most recent receipt at
+            each store.
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {storeRankings.map((store, idx) => {
-            const isLowest = idx === 0;
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] divide-y divide-[var(--border)]">
+          {storeRankings.map((st, idx) => {
+            const isFirst = idx === 0;
+            const brand = getStoreBrand(st.storeName, st.storeBrandHex);
             return (
               <div
-                key={store.storeName}
-                className={`rounded-2xl border p-4 space-y-3 transition-all ${
-                  isLowest
-                    ? "border-emerald-500/50 bg-zinc-900/90 shadow-lg ring-1 ring-emerald-500/30"
-                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
-                }`}
+                key={st.storeName}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-5 py-4"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="px-2.5 py-0.5 rounded-lg text-xs font-bold text-white shadow-sm whitespace-nowrap shrink-0"
-                      style={{ backgroundColor: store.storeBrandHex }}
-                    >
-                      {store.storeName}
-                    </span>
-                    {isLowest && (
-                      <span className="text-[10px] font-bold text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 whitespace-nowrap shrink-0">
-                        Cheapest
+                <div className="flex items-start gap-3.5 min-w-0">
+                  <span className="font-display text-[15px] font-bold text-[var(--text-muted)] w-6 shrink-0 tabular-nums pt-0.5">
+                    #{idx + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: brand.color }}
+                      />
+                      <span className="font-semibold text-[15px] text-[var(--text-primary)]">
+                        {st.storeName}
                       </span>
+                      {isFirst && (
+                        <span className="text-[13px] font-semibold text-[var(--positive)]">
+                          · Best price
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[13px] text-[var(--text-muted)] mt-0.5">
+                      On receipt: &ldquo;{st.rawName}&rdquo; · Seen{" "}
+                      {formatDate(st.lastSeenDate)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sm:text-right pl-9 sm:pl-0 shrink-0">
+                  <div
+                    className={`font-display text-[19px] font-bold tabular-nums ${
+                      isFirst
+                        ? "text-[var(--positive)]"
+                        : "text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {formatValue(st.currentPrice)}
+                  </div>
+                  <div className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                    {formatCurrency(st.totalPrice)} for{" "}
+                    {formatLineMeasure(
+                      st.unitMeasure,
+                      st.quantity,
+                      productData.baseUnit
                     )}
                   </div>
-                  <span className="text-[10px] text-zinc-500 font-mono whitespace-nowrap">
-                    Rank #{idx + 1}
-                  </span>
-                </div>
-
-                {/* Raw POS Alias */}
-                <div className="text-[11px] text-zinc-400 font-mono truncate" title={store.rawName}>
-                  POS: &ldquo;{store.rawName}&rdquo;
-                </div>
-
-                {/* Price & 1Y Difference */}
-                <div className="pt-2 border-t border-zinc-800/80 flex items-baseline justify-between">
-                  <div>
-                    <div className="text-xl font-bold font-mono text-white tabular-nums">
-                      {store.currentPrice.toFixed(2)} {priceMode === "unit" ? unitLabel : "€"}
-                    </div>
-                    <div className="text-[10px] text-zinc-500 font-mono mt-0.5">
-                      Seen {new Date(store.lastSeenDate).toLocaleDateString("en-GB")}
-                    </div>
-                  </div>
-
-                  {store.diffPercent1Y !== null && (
-                    <div className="text-right">
-                      <div
-                        className={`text-xs font-semibold font-mono flex items-center justify-end gap-1 ${
-                          store.diffPercent1Y < 0
-                            ? "text-emerald-400"
-                            : store.diffPercent1Y > 0
-                            ? "text-rose-400"
-                            : "text-zinc-400"
-                        }`}
-                      >
-                        {store.diffPercent1Y < 0 && <TrendingDown className="w-3 h-3" />}
-                        {store.diffPercent1Y > 0 && <TrendingUp className="w-3 h-3" />}
-                        <span>
-                          {store.diffPercent1Y > 0 ? "+" : ""}
-                          {store.diffPercent1Y.toFixed(1)}%
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-zinc-500">vs 1Y ago</span>
-                    </div>
-                  )}
                 </div>
               </div>
             );
           })}
         </div>
-      </div>
+      </section>
 
-      {/* 4. Historical Receipt Sightings Log */}
-      <div className="space-y-4">
-        <div className="space-y-0.5">
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <ReceiptIcon className="w-4 h-4 text-emerald-400" />
-            <span>Historical Receipt Sightings Log ({currentSightings.length} observations)</span>
+      {/* Receipt History (Desktop Table + Mobile Stacked Cards) */}
+      <section aria-labelledby="receipt-history-heading" className="space-y-3">
+        <div>
+          <h2
+            id="receipt-history-heading"
+            className="font-display text-[18px] font-semibold text-[var(--text-primary)]"
+          >
+            Receipt history
           </h2>
-          <p className="text-xs text-zinc-400">
-            Chronological log of confirmed receipt items linking to source tickets.
+          <p className="text-[13px] text-[var(--text-muted)] mt-0.5">
+            {currentSightings.length} recorded{" "}
+            {currentSightings.length === 1 ? "purchase" : "purchases"}. Click
+            any receipt number to view the full ticket.
           </p>
         </div>
 
         {deleteError && (
-          <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 flex items-center gap-2 text-rose-400 text-xs">
+          <div className="rounded-xl bg-[var(--negative-tint)] border border-[var(--negative)] p-3 flex items-center gap-2 text-[var(--negative)] text-[13px]">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{deleteError}</span>
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-2xl border border-zinc-800/80 bg-zinc-900/40">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-950/70 text-zinc-400 font-medium font-mono">
-                <th className="py-3 px-4">Purchase Date</th>
-                <th className="py-3 px-4">Supermarket</th>
-                <th className="py-3 px-4">Receipt Raw Text</th>
-                <th className="py-3 px-4 text-center">Pack Format</th>
-                <th className="py-3 px-4 text-center">Package / Weight</th>
-                <th className="py-3 px-4 text-right">Pack Price</th>
-                <th className="py-3 px-4 text-right">Normalized Price</th>
-                <th className="py-3 px-4 text-right">Receipt</th>
-                {canDelete && <th className="py-3 px-4 text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/60 font-mono">
-              {displayedTableSightings
-                .slice()
-                .reverse()
-                .slice(0, 50)
-                .map((s) => {
-                  const q = Math.max(Number(s.quantity) || 1, 1);
-                  const single = Number((Number(s.unitMeasure) / q).toFixed(3));
-                  const formatBadge = formatPackBadge(single, s.baseUnit);
-
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          {/* Desktop Table */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-[13px] font-semibold text-[var(--text-muted)]">
+                  <th className="py-3 px-4">Date</th>
+                  <th className="py-3 px-4">Store</th>
+                  <th className="py-3 px-4">Item on receipt</th>
+                  <th className="py-3 px-4">Size</th>
+                  <th className="py-3 px-4 text-right">Paid</th>
+                  <th className="py-3 px-4 text-right">Unit price</th>
+                  <th className="py-3 px-4 text-right">Receipt</th>
+                  {canDelete && (
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] text-[15px]">
+                {displayedTableSightings.map((s) => {
+                  const brand = getStoreBrand(s.storeName, s.storeBrandHex);
                   return (
-                    <tr key={s.id} className="hover:bg-zinc-800/30 transition-colors">
-                      <td className="py-2.5 px-4 text-zinc-300">
-                        {new Date(s.purchaseDate).toLocaleDateString("en-GB")}
+                    <tr
+                      key={s.id}
+                      className="hover:bg-[var(--bg-subtle)]/60 transition-colors"
+                    >
+                      <td className="py-3.5 px-4 tabular-nums whitespace-nowrap">
+                        {formatDate(s.purchaseDate)}
                       </td>
-                      <td className="py-2.5 px-4">
-                        <span
-                          className="inline-block px-2 py-0.5 rounded text-[11px] font-bold text-white shadow-sm"
-                          style={{ backgroundColor: s.storeBrandHex }}
-                        >
-                          {s.storeName}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-2 font-medium">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: brand.color }}
+                          />
+                          <span>{s.storeName}</span>
                         </span>
                       </td>
-                      <td className="py-2.5 px-4 text-zinc-400 truncate max-w-xs font-sans">
+                      <td className="py-3.5 px-4 text-[13px] text-[var(--text-muted)] max-w-xs truncate">
                         {s.rawName}
                       </td>
-                      <td className="py-2.5 px-4 text-center">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-zinc-800/80 text-emerald-400 border border-zinc-700/60 text-[10px] font-mono font-medium whitespace-nowrap shrink-0">
-                          {formatBadge}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-4 text-center">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 border border-zinc-800 text-[11px] font-mono shadow-inner">
-                          {s.baseUnit === "KG"
-                            ? `${s.unitMeasure.toFixed(3)} kg`
-                            : s.baseUnit === "L"
-                            ? `${s.unitMeasure} L`
-                            : s.unitMeasure > 1
-                            ? `${s.unitMeasure} units`
-                            : `${s.quantity || 1} unit`}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-4 text-right text-zinc-200 tabular-nums">
-                        €{s.unitPrice.toFixed(2)}
-                      </td>
-                      <td className="py-2.5 px-4 text-right">
-                        <div className="text-emerald-400 font-bold tabular-nums">
-                          €{s.pricePerBaseUnit.toFixed(2)} {unitLabel}
-                        </div>
-                        {s.unitMeasure !== 1 && (
-                          <div className="text-[10px] text-zinc-500 font-normal tabular-nums">
-                            €{s.unitPrice.toFixed(2)} &divide; {s.unitMeasure} {s.baseUnit.toLowerCase()}
-                          </div>
+                      <td className="py-3.5 px-4 tabular-nums whitespace-nowrap text-[13px]">
+                        {formatLineMeasure(
+                          s.unitMeasure,
+                          s.quantity || 1,
+                          s.baseUnit
                         )}
                       </td>
-                      <td className="py-2.5 px-4 text-right">
+                      <td className="py-3.5 px-4 text-right tabular-nums whitespace-nowrap">
+                        {formatCurrency(s.totalPrice)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right tabular-nums font-semibold whitespace-nowrap">
+                        {formatUnitPrice(s.pricePerBaseUnit, s.baseUnit)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
                         <Link
                           href={`/receipts/${s.receiptId}/review`}
-                          className="text-zinc-500 hover:text-emerald-400 transition-colors text-[11px]"
+                          className="text-[13px] font-semibold text-[var(--primary)] hover:underline underline-offset-4 tabular-nums"
                         >
-                          #{s.receiptId.slice(-6)} →
+                          #{s.receiptId.slice(-6)}
                         </Link>
                       </td>
-                    {canDelete && (
-                      <td className="py-2.5 px-4 text-right">
-                        {confirmDeleteId === s.id ? (
-                          <div className="inline-flex items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteSighting(s.id)}
-                              disabled={deletingId === s.id}
-                              className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold transition-colors whitespace-nowrap shrink-0 flex items-center gap-1 shadow-sm"
-                            >
-                              {deletingId === s.id ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : (
-                                "Delete"
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(null)}
-                              className="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800"
-                              title="Cancel"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="inline-flex items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditSighting(s)}
-                              className="p-1.5 text-zinc-400 hover:text-emerald-400 rounded-lg hover:bg-zinc-800/80 transition-colors inline-flex items-center justify-center"
-                              title="Edit observation details"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(s.id)}
-                              className="p-1.5 text-zinc-400 hover:text-rose-400 rounded-lg hover:bg-zinc-800/80 transition-colors inline-flex items-center justify-center"
-                              title="Exclude this observation from price intelligence"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                      {canDelete && (
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          {confirmDeleteId === s.id ? (
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSighting(s.id)}
+                                disabled={deletingId === s.id}
+                                className="h-7 px-2.5 rounded-full bg-[var(--negative)] text-[var(--negative-on)] text-[13px] font-semibold cursor-pointer"
+                              >
+                                {deletingId === s.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  "Remove"
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="h-7 px-2.5 rounded-full border border-[var(--border)] text-[13px] text-[var(--text-muted)] cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditSighting(s)}
+                                aria-label="Edit purchase"
+                                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(s.id)}
+                                aria-label="Remove purchase"
+                                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--negative)] hover:bg-[var(--negative-tint)] cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-      {/* Admin Edit Product Modal */}
+          {/* Mobile Stacked Cards */}
+          <div className="md:hidden divide-y divide-[var(--border)]">
+            {displayedTableSightings.map((s) => {
+              const brand = getStoreBrand(s.storeName, s.storeBrandHex);
+              return (
+                <div key={s.id} className="p-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 font-semibold text-[15px]">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: brand.color }}
+                      />
+                      <span>{s.storeName}</span>
+                    </span>
+                    <span className="font-bold text-[15px] tabular-nums text-[var(--text-primary)]">
+                      {formatUnitPrice(s.pricePerBaseUnit, s.baseUnit)}
+                    </span>
+                  </div>
+                  <div className="text-[13px] text-[var(--text-muted)]">
+                    &ldquo;{s.rawName}&rdquo;
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-[13px] pt-1">
+                    <span className="text-[var(--text-muted)] tabular-nums">
+                      {formatDate(s.purchaseDate)} ·{" "}
+                      {formatLineMeasure(
+                        s.unitMeasure,
+                        s.quantity || 1,
+                        s.baseUnit
+                      )}{" "}
+                      · Paid {formatCurrency(s.totalPrice)}
+                    </span>
+                    <Link
+                      href={`/receipts/${s.receiptId}/review`}
+                      className="font-semibold text-[var(--primary)] tabular-nums shrink-0"
+                    >
+                      #{s.receiptId.slice(-6)}
+                    </Link>
+                  </div>
+                  {canDelete && (
+                    <div className="flex items-center gap-2 pt-2">
+                      {confirmDeleteId === s.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSighting(s.id)}
+                            disabled={deletingId === s.id}
+                            className="h-8 px-3 rounded-full bg-[var(--negative)] text-[var(--negative-on)] text-[13px] font-semibold cursor-pointer"
+                          >
+                            Confirm remove
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="h-8 px-3 rounded-full border border-[var(--border)] text-[13px] cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditSighting(s)}
+                            className="h-8 px-3 rounded-full border border-[var(--border)] text-[13px] font-medium cursor-pointer"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(s.id)}
+                            className="h-8 px-3 rounded-full border border-[var(--border)] text-[var(--negative)] text-[13px] font-medium cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Edit Product Modal */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in-50">
-          <div className="w-full max-w-lg max-h-[92vh] flex flex-col rounded-3xl border border-zinc-800 bg-zinc-950 p-5 sm:p-7 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3.5 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                  <Pencil className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">Edit Product Definition</h3>
-                  <p className="text-xs text-zinc-400">Canonical catalogue entry & normalization rules</p>
-                </div>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-item-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--scrim)]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsEditModalOpen(false);
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-2xl space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2
+                  id="edit-item-title"
+                  className="font-display text-[18px] font-semibold text-[var(--text-primary)]"
+                >
+                  Edit grocery item
+                </h2>
+                <p className="text-[13px] text-[var(--text-muted)] mt-0.5">
+                  Update how this item appears across your history and basket.
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-900 transition-colors"
+                aria-label="Close edit dialog"
+                className="w-9 h-9 rounded-full border border-[var(--border)] inline-flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {editError && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400 flex items-center gap-2 shrink-0">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{editError}</span>
+              <div className="p-3 rounded-xl bg-[var(--negative-tint)] text-[13px] text-[var(--negative)]">
+                {editError}
               </div>
             )}
 
-            <form onSubmit={handleSaveProduct} className="space-y-4 overflow-y-auto pr-1 flex-1">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-300">Display Name</label>
+            <form onSubmit={handleSaveProduct} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="edit-item-name"
+                  className="block text-[13px] font-semibold mb-1.5"
+                >
+                  Item name
+                </label>
                 <input
+                  id="edit-item-name"
                   type="text"
+                  required
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)]"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-zinc-300">Category</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="edit-item-cat"
+                    className="block text-[13px] font-semibold mb-1.5"
+                  >
+                    Category
+                  </label>
                   <select
+                    id="edit-item-cat"
                     value={editCategory}
                     onChange={(e) => setEditCategory(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)]"
                   >
                     {CANONICAL_CATEGORIES.map((cat) => (
                       <option key={cat} value={cat}>
@@ -1677,59 +1947,57 @@ export function ProductTrackerClient({
                   </select>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-zinc-300">Base Unit</label>
-                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-zinc-900 border border-zinc-800">
-                    {(["KG", "L", "UNIT"] as const).map((unit) => (
+                <div>
+                  <span className="block text-[13px] font-semibold mb-1.5">
+                    Comparison unit
+                  </span>
+                  <div className="grid grid-cols-3 p-1 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] gap-1">
+                    {(["KG", "L", "UNIT"] as const).map((u) => (
                       <button
-                        key={unit}
+                        key={u}
                         type="button"
-                        onClick={() => setEditBaseUnit(unit)}
-                        className={`py-1.5 text-xs font-bold rounded-lg transition-all ${
-                          editBaseUnit === unit
-                            ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                            : "text-zinc-400 hover:text-white"
+                        onClick={() => setEditBaseUnit(u)}
+                        className={`h-8 rounded-md text-[13px] font-semibold cursor-pointer ${
+                          editBaseUnit === u
+                            ? "bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm"
+                            : "text-[var(--text-muted)]"
                         }`}
                       >
-                        {unit}
+                        {normalizeUnit(u)}
                       </button>
                     ))}
                   </div>
                 </div>
               </div>
 
-              <div className="pt-2">
-                <label className="flex items-center gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 transition-colors cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editIsStaple}
-                    onChange={(e) => setEditIsStaple(e.target.checked)}
-                    className="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500/20 bg-zinc-950"
-                  />
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-                      <Star className={`w-3.5 h-3.5 ${editIsStaple ? "text-amber-400 fill-amber-400" : "text-zinc-500"}`} />
-                      <span>Everyday Household Staple</span>
-                    </span>
-                    <p className="text-[11px] text-zinc-500">
-                      Prioritizes this product in search suggestions, comparator presets, and the Staple Basket Inflation Index.
-                    </p>
-                  </div>
-                </label>
-              </div>
+              <label className="flex items-center gap-2.5 text-[13px] cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={editIsStaple}
+                  onChange={(e) => setEditIsStaple(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                <span>Track as an everyday staple</span>
+              </label>
 
               {/* Optional Cached Nutrition & Barcode Metadata */}
-              <div className="pt-2 border-t border-zinc-800/80 space-y-3">
-                <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
-                  Nutrition & Barcode Cache (Optional)
+              <div className="pt-3 border-t border-[var(--border)] space-y-3">
+                <div className="text-[13px] font-medium text-[var(--text-muted)]">
+                  Nutrition &amp; barcode details (optional)
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-zinc-400 uppercase">Nutri-Score</label>
+                  <div>
+                    <label
+                      htmlFor="edit-item-nutri"
+                      className="block text-[13px] text-[var(--text-muted)] mb-1"
+                    >
+                      Nutri-Score
+                    </label>
                     <select
+                      id="edit-item-nutri"
                       value={editNutriScore}
                       onChange={(e) => setEditNutriScore(e.target.value)}
-                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] text-[var(--text-primary)]"
                     >
                       <option value="">—</option>
                       <option value="a">A</option>
@@ -1739,12 +2007,18 @@ export function ProductTrackerClient({
                       <option value="e">E</option>
                     </select>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-zinc-400 uppercase">NOVA</label>
+                  <div>
+                    <label
+                      htmlFor="edit-item-nova"
+                      className="block text-[13px] text-[var(--text-muted)] mb-1"
+                    >
+                      NOVA
+                    </label>
                     <select
+                      id="edit-item-nova"
                       value={editNovaGroup}
                       onChange={(e) => setEditNovaGroup(e.target.value)}
-                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] text-[var(--text-primary)]"
                     >
                       <option value="">—</option>
                       <option value="1">1</option>
@@ -1753,9 +2027,15 @@ export function ProductTrackerClient({
                       <option value="4">4</option>
                     </select>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-zinc-400 uppercase">Protein / 100g</label>
+                  <div>
+                    <label
+                      htmlFor="edit-item-prot"
+                      className="block text-[13px] text-[var(--text-muted)] mb-1"
+                    >
+                      Protein/100g
+                    </label>
                     <input
+                      id="edit-item-prot"
                       type="number"
                       step="0.1"
                       min="0"
@@ -1763,12 +2043,18 @@ export function ProductTrackerClient({
                       value={editProtein}
                       onChange={(e) => setEditProtein(e.target.value)}
                       placeholder="g"
-                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 tabular-nums"
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums text-[var(--text-primary)]"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-zinc-400 uppercase">kcal / 100g</label>
+                  <div>
+                    <label
+                      htmlFor="edit-item-kcal"
+                      className="block text-[13px] text-[var(--text-muted)] mb-1"
+                    >
+                      kcal/100g
+                    </label>
                     <input
+                      id="edit-item-kcal"
                       type="number"
                       step="1"
                       min="0"
@@ -1776,38 +2062,46 @@ export function ProductTrackerClient({
                       value={editKcal}
                       onChange={(e) => setEditKcal(e.target.value)}
                       placeholder="kcal"
-                      className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 tabular-nums"
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums text-[var(--text-primary)]"
                     />
                   </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-mono text-zinc-400 uppercase">EAN / Barcode</label>
+                <div>
+                  <label
+                    htmlFor="edit-item-ean"
+                    className="block text-[13px] text-[var(--text-muted)] mb-1"
+                  >
+                    EAN / Barcode
+                  </label>
                   <input
+                    id="edit-item-ean"
                     type="text"
                     value={editEan}
                     onChange={(e) => setEditEan(e.target.value)}
                     placeholder="e.g. 8480000105302"
-                    className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums text-[var(--text-primary)]"
                   />
                 </div>
               </div>
 
-              <div className="pt-3.5 border-t border-zinc-800 flex items-center justify-end gap-3 shrink-0">
+              <div className="flex justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsEditModalOpen(false)}
                   disabled={isSavingProduct}
-                  className="px-4 py-2 rounded-xl border border-zinc-800 hover:bg-zinc-900 text-xs font-medium text-zinc-400 transition-colors whitespace-nowrap shrink-0"
+                  className="h-9 px-4 rounded-full border border-[var(--border)] text-[13px] font-medium cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSavingProduct}
-                  className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold shadow-md shadow-emerald-500/20 transition-all inline-flex items-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="h-9 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-2 cursor-pointer"
                 >
-                  {isSavingProduct && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Save Changes</span>
+                  {isSavingProduct && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  )}
+                  <span>Save changes</span>
                 </button>
               </div>
             </form>
@@ -1815,99 +2109,107 @@ export function ProductTrackerClient({
         </div>
       )}
 
-      {/* Admin Normalize Product History Modal */}
+      {/* Normalize Pack Sizes Modal */}
       {isNormalizeModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in-50">
-          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-3xl border border-zinc-800 bg-zinc-950 p-6 sm:p-8 space-y-6 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-4 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                  <Scale className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">Normalize Format & History</h3>
-                  <p className="text-xs text-zinc-400">Retroactively recalculates all historical purchases of this product</p>
-                </div>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="normalize-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--scrim)]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsNormalizeModalOpen(false);
+          }}
+        >
+          <div className="w-full max-w-xl max-h-[90vh] flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-2xl space-y-5 overflow-hidden">
+            <div className="flex items-start justify-between gap-3 shrink-0">
+              <div>
+                <h2
+                  id="normalize-title"
+                  className="font-display text-[18px] font-semibold text-[var(--text-primary)]"
+                >
+                  Pack sizes and history
+                </h2>
+                <p className="text-[13px] text-[var(--text-muted)] mt-0.5">
+                  Update the unit or pack sizes to recalculate past unit prices.
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsNormalizeModalOpen(false)}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-900 transition-colors"
+                aria-label="Close pack sizes dialog"
+                className="w-9 h-9 rounded-full border border-[var(--border)] inline-flex items-center justify-center hover:bg-[var(--bg-subtle)] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {normalizeError && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400 flex items-center gap-2 shrink-0">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{normalizeError}</span>
+              <div className="p-3 rounded-xl bg-[var(--negative-tint)] text-[13px] text-[var(--negative)]">
+                {normalizeError}
               </div>
             )}
 
-            <form onSubmit={handleNormalizeHistory} className="space-y-6 overflow-y-auto pr-1">
-              {/* 1. Canonical Base Unit Selector */}
-              <div className="space-y-2 p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800">
-                <label className="text-xs font-semibold text-zinc-300 block">
-                  Canonical Product Base Unit
-                </label>
+            <form
+              onSubmit={handleNormalizeHistory}
+              className="space-y-4 overflow-y-auto pr-1"
+            >
+              <div className="rounded-xl bg-[var(--bg-subtle)] p-4 space-y-2">
+                <span className="text-[13px] font-semibold block">
+                  Comparison unit
+                </span>
                 <div className="grid grid-cols-3 gap-2">
                   {(["KG", "L", "UNIT"] as const).map((unit) => (
                     <button
                       key={unit}
                       type="button"
                       onClick={() => setNormalizeBaseUnit(unit)}
-                      className={`py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap shrink-0 ${
+                      className={`h-9 rounded-lg text-[13px] font-semibold cursor-pointer ${
                         normalizeBaseUnit === unit
-                          ? "bg-emerald-500 text-zinc-950 shadow-md"
-                          : "bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800"
+                          ? "bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm border border-[var(--border)]"
+                          : "text-[var(--text-muted)]"
                       }`}
                     >
-                      {unit === "KG" ? "KG (€/kg)" : unit === "L" ? "L (€/L)" : "UNIT (€/unit)"}
+                      {unit === "KG"
+                        ? "Per kg"
+                        : unit === "L"
+                          ? "Per litre"
+                          : "Per unit"}
                     </button>
                   ))}
                 </div>
-                <p className="text-[11px] text-zinc-500">
-                  All historical purchases will be normalized to this reference unit.
-                </p>
               </div>
 
-              {/* 2. Linked Product Aliases Format Mapping */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider font-mono">
-                    Formats by Supermarket / POS SKU ({aliasFormats.length})
-                  </span>
-                  <span className="text-[11px] text-zinc-500 font-mono">
-                    1 pack = X {normalizeBaseUnit.toLowerCase()}
-                  </span>
+                <div className="text-[13px] font-semibold">
+                  Receipt names ({aliasFormats.length})
                 </div>
-
                 {aliasFormats.length === 0 ? (
-                  <div className="p-4 rounded-xl border border-dashed border-zinc-800 text-center text-xs text-zinc-500">
-                    No aliases recorded for this product yet.
-                  </div>
+                  <p className="text-[13px] text-[var(--text-muted)]">
+                    No store receipt names linked yet.
+                  </p>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="divide-y divide-[var(--border)] border-y border-[var(--border)]">
                     {aliasFormats.map((af, idx) => (
-                      <div
-                        key={af.aliasId || idx}
-                        className="p-4 rounded-2xl bg-zinc-900/40 border border-zinc-800/80 space-y-3"
-                      >
+                      <div key={af.aliasId || idx} className="py-3 space-y-2">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 text-[13px]">
                             <span
-                              className="px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm whitespace-nowrap shrink-0"
-                              style={{ backgroundColor: af.storeBrandHex }}
-                            >
+                              className="w-2.5 h-2.5 rounded-full shrink-0"
+                              style={{
+                                backgroundColor: getStoreBrand(
+                                  af.storeName,
+                                  af.storeBrandHex
+                                ).color,
+                              }}
+                            />
+                            <span className="font-semibold">
                               {af.storeName}
                             </span>
-                            <span className="font-mono text-xs text-zinc-200 font-medium truncate max-w-xs">
+                            <span className="text-[var(--text-muted)]">
                               &ldquo;{af.rawAlias}&rdquo;
                             </span>
                           </div>
-
-                          <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-400 hover:text-zinc-200">
+                          <label className="flex items-center gap-2 text-[13px] cursor-pointer">
                             <input
                               type="checkbox"
                               checked={af.isVariableWeight}
@@ -1919,101 +2221,50 @@ export function ProductTrackerClient({
                                       ? {
                                           ...item,
                                           isVariableWeight: checked,
-                                          unitMeasurePerPack: checked ? null : item.unitMeasurePerPack,
+                                          unitMeasurePerPack: checked
+                                            ? null
+                                            : item.unitMeasurePerPack,
                                         }
                                       : item
                                   )
                                 );
                               }}
-                              className="w-3.5 h-3.5 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500/20 bg-zinc-950"
                             />
-                            <span className="text-[11px] font-mono">Variable checkout weight (loose)</span>
+                            <span>Sold by counter weight</span>
                           </label>
                         </div>
 
-                        {!af.isVariableWeight ? (
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-3">
-                              <div className="flex-1">
-                                <label className="text-[10px] text-zinc-400 font-mono block mb-1">
-                                  Net content per individual pack ({normalizeBaseUnit.toLowerCase()}):
-                                </label>
-                                <input
-                                  type="number"
-                                  step="0.001"
-                                  min="0.001"
-                                  value={af.unitMeasurePerPack ?? ""}
-                                  placeholder="e.g. 1.500"
-                                  onChange={(e) => {
-                                    const val = e.target.value === "" ? null : parseFloat(e.target.value);
-                                    setAliasFormats((prev) =>
-                                      prev.map((item, i) =>
-                                        i === idx ? { ...item, unitMeasurePerPack: val } : item
-                                      )
-                                    );
-                                  }}
-                                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                                />
-                              </div>
-
-                              <div className="pt-4 text-xs font-mono text-zinc-400">
-                                {af.unitMeasurePerPack ? (
-                                  <span className="text-emerald-400 font-bold">
-                                    {formatPackBadge(af.unitMeasurePerPack, normalizeBaseUnit)}
-                                  </span>
-                                ) : (
-                                  <span className="text-zinc-600">No fixed format</span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Preset Buttons */}
-                            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                              <span className="text-[10px] text-zinc-500 font-mono mr-1">Presets:</span>
-                              {(normalizeBaseUnit === "L"
-                                ? [
-                                    { l: "330ml", v: 0.33 },
-                                    { l: "500ml", v: 0.5 },
-                                    { l: "1L", v: 1 },
-                                    { l: "1.5L", v: 1.5 },
-                                    { l: "2L", v: 2 },
-                                    { l: "5L", v: 5 },
-                                  ]
-                                : normalizeBaseUnit === "KG"
-                                ? [
-                                    { l: "125g", v: 0.125 },
-                                    { l: "250g", v: 0.25 },
-                                    { l: "400g", v: 0.4 },
-                                    { l: "500g", v: 0.5 },
-                                    { l: "1kg", v: 1 },
-                                  ]
-                                : [
-                                    { l: "1 unit", v: 1 },
-                                    { l: "4 units", v: 4 },
-                                    { l: "6 units", v: 6 },
-                                    { l: "12 units", v: 12 },
-                                  ]
-                              ).map((preset) => (
-                                <button
-                                  key={preset.l}
-                                  type="button"
-                                  onClick={() => {
-                                    setAliasFormats((prev) =>
-                                      prev.map((item, i) =>
-                                        i === idx ? { ...item, unitMeasurePerPack: preset.v } : item
-                                      )
-                                    );
-                                  }}
-                                  className="px-2 py-0.5 rounded-md bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-mono text-zinc-400 hover:text-zinc-200 transition-colors whitespace-nowrap shrink-0"
-                                >
-                                  {preset.l}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-[11px] font-mono text-amber-400/90 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-xl">
-                            Purchases with this alias will maintain their specific scale weight recorded on each receipt.
+                        {!af.isVariableWeight && (
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="number"
+                              step="0.001"
+                              min="0.001"
+                              value={af.unitMeasurePerPack ?? ""}
+                              onChange={(e) => {
+                                const val =
+                                  e.target.value === ""
+                                    ? null
+                                    : parseFloat(e.target.value);
+                                setAliasFormats((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx
+                                      ? { ...item, unitMeasurePerPack: val }
+                                      : item
+                                  )
+                                );
+                              }}
+                              placeholder={`Size in ${normalizeUnit(normalizeBaseUnit)}`}
+                              className="w-40 h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums"
+                            />
+                            <span className="text-[13px] text-[var(--text-muted)]">
+                              {af.unitMeasurePerPack
+                                ? formatMeasureText(
+                                    af.unitMeasurePerPack,
+                                    normalizeBaseUnit
+                                  )
+                                : "No fixed pack size"}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -2022,22 +2273,24 @@ export function ProductTrackerClient({
                 )}
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-3 shrink-0">
+              <div className="flex justify-end gap-2.5 pt-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsNormalizeModalOpen(false)}
                   disabled={isNormalizing}
-                  className="px-4 py-2 rounded-xl border border-zinc-800 hover:bg-zinc-900 text-xs font-medium text-zinc-400 transition-colors whitespace-nowrap shrink-0"
+                  className="h-9 px-4 rounded-full border border-[var(--border)] text-[13px] font-medium cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isNormalizing}
-                  className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold shadow-md shadow-emerald-500/20 transition-all inline-flex items-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="h-9 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-2 cursor-pointer"
                 >
-                  {isNormalizing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>⚡ Recalculate full history</span>
+                  {isNormalizing && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  )}
+                  <span>Recalculate history</span>
                 </button>
               </div>
             </form>
@@ -2045,77 +2298,65 @@ export function ProductTrackerClient({
         </div>
       )}
 
-      {/* Edit Sighting Observation Modal */}
+      {/* Edit Purchase Modal */}
       {editingSighting && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in-50">
-          <div className="w-full max-w-lg max-h-[92vh] flex flex-col rounded-3xl border border-zinc-800 bg-zinc-950 p-5 sm:p-7 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3.5 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                  <Pencil className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">Edit Observation</h3>
-                  <p className="text-xs text-zinc-400">
-                    Correct pack price, quantity, or net package weight for this purchase
-                  </p>
-                </div>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-purchase-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--scrim)]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setEditingSighting(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2
+                  id="edit-purchase-title"
+                  className="font-display text-[18px] font-semibold"
+                >
+                  Edit recorded purchase
+                </h2>
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  {editingSighting.storeName} ·{" "}
+                  {formatDate(editingSighting.purchaseDate)}
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setEditingSighting(null)}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-900 transition-colors"
+                aria-label="Close purchase editor"
+                className="w-9 h-9 rounded-full border border-[var(--border)] inline-flex items-center justify-center cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {sightingSaveError && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-400 flex items-center gap-2 shrink-0">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{sightingSaveError}</span>
+              <div className="p-3 rounded-xl bg-[var(--negative-tint)] text-[13px] text-[var(--negative)]">
+                {sightingSaveError}
               </div>
             )}
 
-            {/* Context Info Banner */}
-            <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-900/60 border border-zinc-800 text-xs shrink-0">
-              <div className="flex items-center gap-2">
-                <span
-                  className="px-2 py-0.5 rounded text-[11px] font-bold text-white shadow-sm"
-                  style={{ backgroundColor: editingSighting.storeBrandHex }}
-                >
-                  {editingSighting.storeName}
-                </span>
-                <span className="text-zinc-400 font-mono">
-                  {new Date(editingSighting.purchaseDate).toLocaleDateString("en-GB")}
-                </span>
-              </div>
-              <Link
-                href={`/receipts/${editingSighting.receiptId}/review`}
-                target="_blank"
-                className="text-zinc-500 hover:text-emerald-400 font-mono text-[11px] transition-colors"
-              >
-                #{editingSighting.receiptId.slice(-6)} ↗
-              </Link>
-            </div>
-
-            <form onSubmit={handleSaveSighting} className="space-y-4 overflow-y-auto pr-1 flex-1">
-              {/* Receipt Raw Text */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-300">Receipt Raw Text</label>
+            <form onSubmit={handleSaveSighting} className="space-y-3.5">
+              <div>
+                <label className="block text-[13px] font-semibold mb-1">
+                  Receipt text
+                </label>
                 <input
                   type="text"
                   value={editSightingRawName}
                   onChange={(e) => setEditSightingRawName(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors font-mono"
-                  placeholder="POS line item description"
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px]"
                 />
               </div>
 
-              {/* Price & Quantity Grid */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-zinc-300">Pack Price (€)</label>
+                <div>
+                  <label className="block text-[13px] font-semibold mb-1">
+                    Pack price (€)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
@@ -2123,13 +2364,13 @@ export function ProductTrackerClient({
                     required
                     value={editSightingPrice}
                     onChange={(e) => setEditSightingPrice(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors font-mono tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums"
                   />
-                  <p className="text-[10px] text-zinc-500">Printed shelf price per pack</p>
                 </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-zinc-300">Quantity</label>
+                <div>
+                  <label className="block text-[13px] font-semibold mb-1">
+                    Quantity
+                  </label>
                   <input
                     type="number"
                     step="any"
@@ -2137,148 +2378,59 @@ export function ProductTrackerClient({
                     required
                     value={editSightingQty}
                     onChange={(e) => setEditSightingQty(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors font-mono tabular-nums"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums"
                   />
-                  <p className="text-[10px] text-zinc-500">Number of packs purchased</p>
                 </div>
               </div>
 
-              {/* Net Content / Weight */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-zinc-300">
-                    Total Package / Weight ({editingSighting.baseUnit})
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[13px] font-semibold mb-1">
+                    Total size ({normalizeUnit(editingSighting.baseUnit)})
                   </label>
-                  <span className="text-[10px] font-mono text-zinc-500">
-                    Per pack:{" "}
-                    {(
-                      (parseFloat(editSightingMeasure) || 0) /
-                      Math.max(parseFloat(editSightingQty) || 1, 1)
-                    ).toFixed(3)}{" "}
-                    {editingSighting.baseUnit.toLowerCase()}
-                  </span>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.001"
+                    required
+                    value={editSightingMeasure}
+                    onChange={(e) => setEditSightingMeasure(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums"
+                  />
                 </div>
-                <input
-                  type="number"
-                  step="any"
-                  min="0.001"
-                  required
-                  value={editSightingMeasure}
-                  onChange={(e) => setEditSightingMeasure(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors font-mono tabular-nums"
-                />
-
-                {/* Quick Presets based on baseUnit */}
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                  <span className="text-[10px] text-zinc-500 mr-1 font-mono">Presets:</span>
-                  {(editingSighting.baseUnit === "KG"
-                    ? [
-                        { label: "250g", val: 0.25 },
-                        { label: "400g", val: 0.4 },
-                        { label: "500g", val: 0.5 },
-                        { label: "750g", val: 0.75 },
-                        { label: "1kg", val: 1.0 },
-                        { label: "2kg", val: 2.0 },
-                      ]
-                    : editingSighting.baseUnit === "L"
-                    ? [
-                        { label: "330ml", val: 0.33 },
-                        { label: "500ml", val: 0.5 },
-                        { label: "1L", val: 1.0 },
-                        { label: "1.5L", val: 1.5 },
-                        { label: "2L", val: 2.0 },
-                        { label: "5L", val: 5.0 },
-                      ]
-                    : [
-                        { label: "1 unit", val: 1 },
-                        { label: "6 units", val: 6 },
-                        { label: "10 units", val: 10 },
-                        { label: "12 units", val: 12 },
-                        { label: "24 units", val: 24 },
-                      ]
-                  ).map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => {
-                        const q = Math.max(parseFloat(editSightingQty) || 1, 1);
-                        const totalM = Number((preset.val * q).toFixed(3));
-                        setEditSightingMeasure(totalM.toString());
-                      }}
-                      className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-emerald-400 text-[10px] font-mono transition-colors whitespace-nowrap shrink-0"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
+                <div>
+                  <label className="block text-[13px] font-semibold mb-1">
+                    Purchase date
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="DD/MM/YYYY"
+                    value={editSightingDate}
+                    onChange={(e) => setEditSightingDate(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-[13px] tabular-nums"
+                  />
                 </div>
               </div>
 
-              {/* Purchase Date */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-zinc-300">Purchase Date</label>
-                <input
-                  type="date"
-                  value={editSightingDate}
-                  onChange={(e) => setEditSightingDate(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-emerald-500 transition-colors font-mono"
-                />
-              </div>
-
-              {/* Live Preview Bar */}
-              {(() => {
-                const liveP = parseFloat(editSightingPrice) || 0;
-                const liveQ = parseFloat(editSightingQty) || 1;
-                const liveM = parseFloat(editSightingMeasure) || 1;
-                const liveTot = liveP * liveQ;
-                const liveNorm = liveM > 0 ? liveTot / liveM : 0;
-                const singlePack = liveM / Math.max(liveQ, 1);
-                const liveBadge = formatPackBadge(singlePack, editingSighting.baseUnit);
-
-                return (
-                  <div className="p-3 rounded-2xl bg-zinc-900/90 border border-zinc-800/80 space-y-2">
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 font-bold">
-                      Calculated Preview
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-center">
-                      <div className="p-2 rounded-xl bg-zinc-950/70 border border-zinc-800/60">
-                        <div className="text-[10px] text-zinc-400">Total Spend</div>
-                        <div className="text-xs font-bold font-mono text-zinc-200">
-                          €{liveTot.toFixed(2)}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded-xl bg-zinc-950/70 border border-zinc-800/60">
-                        <div className="text-[10px] text-zinc-400">Normalized Price</div>
-                        <div className="text-xs font-bold font-mono text-emerald-400">
-                          €{liveNorm.toFixed(2)} {unitLabel}
-                        </div>
-                      </div>
-                      <div className="p-2 rounded-xl bg-zinc-950/70 border border-zinc-800/60">
-                        <div className="text-[10px] text-zinc-400">Pack Format</div>
-                        <div className="text-[11px] font-bold font-mono text-zinc-300 truncate">
-                          {liveBadge}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="pt-3.5 border-t border-zinc-800 flex items-center justify-end gap-3 shrink-0">
+              <div className="flex justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setEditingSighting(null)}
                   disabled={isSavingSighting}
-                  className="px-4 py-2 rounded-xl border border-zinc-800 hover:bg-zinc-900 text-xs font-medium text-zinc-400 transition-colors whitespace-nowrap shrink-0"
+                  className="h-9 px-4 rounded-full border border-[var(--border)] text-[13px] font-medium cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSavingSighting}
-                  className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold shadow-md shadow-emerald-500/20 transition-all inline-flex items-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="h-9 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-2 cursor-pointer"
                 >
-                  {isSavingSighting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Save Observation</span>
+                  {isSavingSighting && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  )}
+                  <span>Save</span>
                 </button>
               </div>
             </form>
@@ -2288,4 +2440,3 @@ export function ProductTrackerClient({
     </div>
   );
 }
-

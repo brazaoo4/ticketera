@@ -8,64 +8,78 @@ import { useRouter } from "next/navigation";
 
 export function EmptyStateDemoCard({
   title = "Welcome to Ticketera",
-  description = "No confirmed receipts found in the system yet. Upload your first grocery receipt or load the demo dataset to explore the platform.",
+  description = "No saved receipts yet. Upload your first grocery receipt or load the sample Spanish dataset to explore price comparisons.",
 }: {
   title?: string;
   description?: string;
 }) {
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const router = useRouter();
 
   const handleLoadDemo = async () => {
     setIsLoading(true);
+    setErrorMsg(null);
     try {
       const res = await loadDemoDataAction();
       if (res?.success) {
         router.refresh();
       } else {
-        const errMsg = (res && "error" in res && typeof res.error === "string") ? res.error : "Unknown";
-        alert("Error loading demo data: " + errMsg);
+        const errMsg =
+          res && "error" in res && typeof res.error === "string"
+            ? res.error
+            : "Could not load sample data.";
+        setErrorMsg(errMsg);
       }
     } catch {
-      alert("Unexpected error loading demo data.");
+      setErrorMsg("Unexpected error loading sample data.");
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-8 sm:p-12 text-center max-w-2xl mx-auto backdrop-blur-xl space-y-6">
-      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/10">
-        <Receipt className="w-8 h-8 stroke-[2.2]" />
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-8 sm:p-12 text-center max-w-2xl mx-auto space-y-6">
+      <div className="w-14 h-14 rounded-2xl bg-[var(--primary-tint)] text-[var(--primary)] flex items-center justify-center mx-auto">
+        <Receipt className="w-7 h-7" />
       </div>
 
       <div className="space-y-2">
-        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">{title}</h2>
-        <p className="text-sm text-zinc-400 max-w-md mx-auto leading-relaxed">
+        <h1 className="font-display text-2xl sm:text-[30px] font-bold text-[var(--text-primary)]">
+          {title}
+        </h1>
+        <p className="text-[15px] text-[var(--text-muted)] max-w-md mx-auto leading-relaxed">
           {description}
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+      {errorMsg && (
+        <p className="text-[13px] text-[var(--negative)] font-medium">
+          {errorMsg}
+        </p>
+      )}
+
+      <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-1">
         <Link
           href="/upload"
-          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/20 whitespace-nowrap shrink-0"
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] font-semibold text-[13px] transition-colors whitespace-nowrap shrink-0"
         >
-          <Upload className="w-4 h-4 stroke-[2.5] shrink-0" />
-          <span>Upload First Receipt</span>
+          <Upload className="w-4 h-4 shrink-0" />
+          <span>Add first receipt</span>
         </Link>
 
         <button
+          type="button"
           onClick={handleLoadDemo}
           disabled={isLoading}
-          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 font-semibold text-sm transition-all whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 h-10 px-5 rounded-full bg-[var(--bg-card)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] border border-[var(--border)] font-medium text-[13px] transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
         >
           {isLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin shrink-0 text-amber-400" />
+            <Loader2 className="w-4 h-4 animate-spin shrink-0 text-[var(--accent)]" />
           ) : (
-            <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+            <Sparkles className="w-4 h-4 text-[var(--accent)] shrink-0" />
           )}
-          <span>Load Demo Data</span>
+          <span>Load sample data</span>
         </button>
       </div>
     </div>

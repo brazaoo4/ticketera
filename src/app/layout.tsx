@@ -1,41 +1,49 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Bricolage_Grotesque, DM_Sans } from "next/font/google";
 import "./globals.css";
 import { auth } from "@/lib/auth";
 import { AuthProvider } from "@/components/providers/auth-provider";
+import { ThemeProvider } from "@/components/providers/theme-provider";
 import { AppShell } from "@/components/layout/app-shell";
 import { isDemoModeActive } from "@/lib/demo/demo-data";
 import { isPublicCatalogEnabled } from "@/lib/settings";
 import { prisma } from "@/lib/db";
 import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-registration";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-bricolage",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const dmSans = DM_Sans({
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-dm-sans",
 });
+
+const THEME_INIT_SCRIPT = `(function(){try{var k="ticketera-theme";var t=localStorage.getItem(k);var r=t==="light"||t==="dark"?t:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.setAttribute("data-theme",r);var m=document.querySelector('meta[name="color-scheme"]');if(m){m.setAttribute("content",t==="light"||t==="dark"?t:"light dark");}}catch(e){}})();`;
 
 export const viewport: Viewport = {
-  themeColor: "#10b981",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FAF9F6" },
+    { media: "(prefers-color-scheme: dark)", color: "#141513" },
+  ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  maximumScale: 5,
   viewportFit: "cover",
 };
 
 export const metadata: Metadata = {
-  title: "Ticketera — Grocery Price Intelligence & Personal Inflation",
+  title: "Ticketera — Your grocery prices & receipts",
   description:
-    "Spanish grocery receipt scanner, price history intelligence, and personal inflation platform.",
+    "Everyday Spanish grocery receipt tracker, unit-price comparison, and personal spending overview.",
   manifest: "/manifest.webmanifest",
   applicationName: "Ticketera",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
     title: "Ticketera",
   },
   icons: {
@@ -82,19 +90,26 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full dark`}
+      className={`${bricolage.variable} ${dmSans.variable} h-full`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col bg-zinc-950 text-zinc-100 font-sans antialiased">
+      <head>
+        <meta name="color-scheme" content="light dark" />
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
+      <body className="min-h-full flex flex-col bg-[var(--bg-page)] text-[var(--text-primary)] font-sans antialiased">
         <AuthProvider session={session}>
-          <AppShell
-            user={user}
-            isDemoActive={isDemoActive}
-            publicCatalog={isPublicCatalog}
-            diaReauthRequired={diaReauthRequired}
-          >
-            {children}
-          </AppShell>
-          <ServiceWorkerRegistration />
+          <ThemeProvider>
+            <AppShell
+              user={user}
+              isDemoActive={isDemoActive}
+              publicCatalog={isPublicCatalog}
+              diaReauthRequired={diaReauthRequired}
+            >
+              {children}
+            </AppShell>
+            <ServiceWorkerRegistration />
+          </ThemeProvider>
         </AuthProvider>
       </body>
     </html>

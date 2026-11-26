@@ -283,20 +283,20 @@ export async function loadDemoData(): Promise<{ success: boolean; count: number 
       try {
         const svg = `
           <svg width="400" height="700" xmlns="http://www.w3.org/2000/svg">
-            <rect width="100%" height="100%" fill="#18181b"/>
-            <rect x="20" y="20" width="360" height="660" rx="12" fill="#27272a" stroke="#3f3f46" stroke-width="2"/>
-            <text x="200" y="70" font-family="sans-serif" font-size="20" font-weight="bold" fill="#10b981" text-anchor="middle">TICKET DEMO</text>
-            <text x="200" y="105" font-family="sans-serif" font-size="14" fill="#a1a1aa" text-anchor="middle">${title}</text>
-            <line x1="40" y1="130" x2="360" y2="130" stroke="#52525b" stroke-dasharray="4"/>
-            <text x="50" y="170" font-family="monospace" font-size="13" fill="#e4e4e7">ARTICULOS VERIFICADOS</text>
-            <text x="50" y="210" font-family="monospace" font-size="12" fill="#a1a1aa">1x ACEITE OLIVA VIRGEN</text>
-            <text x="350" y="210" font-family="monospace" font-size="12" fill="#e4e4e7" text-anchor="end">8.95</text>
-            <text x="50" y="240" font-family="monospace" font-size="12" fill="#a1a1aa">6x LECHE ENTERA 1L</text>
-            <text x="350" y="240" font-family="monospace" font-size="12" fill="#e4e4e7" text-anchor="end">5.70</text>
-            <text x="50" y="270" font-family="monospace" font-size="12" fill="#a1a1aa">1x PECHUGA POLLO 540G</text>
-            <text x="350" y="270" font-family="monospace" font-size="12" fill="#e4e4e7" text-anchor="end">3.78</text>
-            <line x1="40" y1="580" x2="360" y2="580" stroke="#52525b" stroke-dasharray="4"/>
-            <text x="200" y="620" font-family="sans-serif" font-size="12" fill="#71717a" text-anchor="middle">Ticketera Demo System</text>
+            <rect width="100%" height="100%" fill="#FAF9F6"/>
+            <rect x="20" y="20" width="360" height="660" rx="12" fill="#FFFDF8" stroke="#DDDAD0" stroke-width="2"/>
+            <text x="200" y="70" font-family="sans-serif" font-size="20" font-weight="bold" fill="#15803D" text-anchor="middle">TICKET DEMO</text>
+            <text x="200" y="105" font-family="sans-serif" font-size="14" fill="#5F645E" text-anchor="middle">${title}</text>
+            <line x1="40" y1="130" x2="360" y2="130" stroke="#DDDAD0" stroke-dasharray="4"/>
+            <text x="50" y="170" font-family="sans-serif" font-size="13" font-weight="600" fill="#1F221F">ARTICULOS VERIFICADOS</text>
+            <text x="50" y="210" font-family="sans-serif" font-size="13" fill="#5F645E">1x ACEITE OLIVA VIRGEN</text>
+            <text x="350" y="210" font-family="sans-serif" font-size="13" font-weight="600" fill="#1F221F" text-anchor="end">8,95 €</text>
+            <text x="50" y="240" font-family="sans-serif" font-size="13" fill="#5F645E">6x LECHE ENTERA 1L</text>
+            <text x="350" y="240" font-family="sans-serif" font-size="13" font-weight="600" fill="#1F221F" text-anchor="end">5,70 €</text>
+            <text x="50" y="270" font-family="sans-serif" font-size="13" fill="#5F645E">1x PECHUGA POLLO 540G</text>
+            <text x="350" y="270" font-family="sans-serif" font-size="13" font-weight="600" fill="#1F221F" text-anchor="end">3,78 €</text>
+            <line x1="40" y1="580" x2="360" y2="580" stroke="#DDDAD0" stroke-dasharray="4"/>
+            <text x="200" y="620" font-family="sans-serif" font-size="13" fill="#5F645E" text-anchor="middle">Ticketera Demo</text>
           </svg>
         `;
         await sharp(Buffer.from(svg)).webp({ quality: 85 }).toFile(dest);

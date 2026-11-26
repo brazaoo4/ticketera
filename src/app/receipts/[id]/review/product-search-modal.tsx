@@ -4,13 +4,13 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Search,
   X,
-  ShoppingBag,
-  Sparkles,
+  Star,
   Plus,
   Loader2,
-  ScanBarcode,
   Check,
+  ScanBarcode,
 } from "lucide-react";
+import { normalizeUnit } from "@/lib/format";
 import { BarcodeScannerModal } from "@/components/common/barcode-scanner-modal";
 import type { CatalogLookupResult } from "@/lib/catalog/parser";
 import {
@@ -56,43 +56,68 @@ export function ProductSearchModal({
     offMatch: CatalogLookupResult | null;
     error?: string | null;
   } | null>(null);
+  const [barcodeResults, setBarcodeResults] = useState<SearchedProduct[] | null>(
+    null
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setQuery(initialQuery);
-      setBarcodeMatch(null);
-      fetchResults(initialQuery);
-      setTimeout(() => inputRef.current?.focus(), 80);
-    }
-  }, [isOpen, initialQuery]);
+    if (!isOpen) return;
+    setBarcodeMatch(null);
+    setBarcodeResults(null);
+    const focusTimer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 60);
+    return () => clearTimeout(focusTimer);
+  }, [isOpen]);
 
-  const fetchResults = async (q: string) => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setResults(data.products || []);
+  useEffect(() => {
+    if (!isOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setIsLoading(true);
+      try {
+        const res = await fetch(
+          `/api/products/search?q=${encodeURIComponent(query.trim())}`,
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setResults(Array.isArray(data.products) ? data.products : []);
+        }
+      } catch (err) {
+        if ((err as Error)?.name !== "AbortError") {
+          setResults([]);
+        }
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err) {
-      console.warn("Product search failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    }, 180);
 
-  const handleQueryChange = (val: string) => {
-    setQuery(val);
-    fetchResults(val);
-  };
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [isOpen, query]);
 
   const handleBarcodeDetected = async (ean: string) => {
     setScannerOpen(false);
     setIsLoading(true);
     setBarcodeMatch(null);
+    setBarcodeResults(null);
     try {
-      const res = await fetch(`/api/catalog/lookup?barcode=${encodeURIComponent(ean)}`);
+      const res = await fetch(
+        `/api/catalog/lookup?barcode=${encodeURIComponent(ean)}`
+      );
       if (!res.ok) {
         setBarcodeMatch({
           ean,
@@ -109,23 +134,22 @@ export function ProductSearchModal({
         seenIds.add(data.localProduct.id);
         combined.push({
           ...data.localProduct,
-          matchReason: "Exact Barcode",
+          matchReason: "Exact barcode",
         });
       }
       if (Array.isArray(data.matchedLocalProducts)) {
         for (const p of data.matchedLocalProducts) {
           if (!seenIds.has(p.id)) {
             seenIds.add(p.id);
-            combined.push({ ...p, matchReason: "OpenFoodFacts Name" });
+            combined.push({ ...p, matchReason: "Name match" });
           }
         }
       }
 
       if (combined.length > 0) {
-        setResults(combined);
+        setBarcodeResults(combined);
       } else if (data.offMatch?.productName) {
         setQuery(data.offMatch.productName);
-        void fetchResults(data.offMatch.productName);
       }
 
       setBarcodeMatch({
@@ -133,7 +157,7 @@ export function ProductSearchModal({
         offMatch: data.offMatch || null,
         error:
           combined.length === 0 && !data.offMatch
-            ? `No local or OpenFoodFacts match for EAN ${ean}.`
+            ? `No pantry or OpenFoodFacts match for EAN ${ean}.`
             : null,
       });
     } catch {
@@ -149,79 +173,98 @@ export function ProductSearchModal({
 
   if (!isOpen) return null;
 
+  const displayedResults = barcodeResults ?? results;
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-150">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Match grocery product"
+    >
       <div
-        className="fixed inset-0"
+        className="fixed inset-0 bg-[var(--scrim)] backdrop-blur-[2px]"
         onClick={onClose}
-        aria-hidden="true"
       />
 
-      <div className="relative z-10 w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl overflow-hidden max-h-[85vh] flex flex-col pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] shadow-2xl overflow-hidden flex flex-col max-h-[82vh]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-              <ShoppingBag className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-white">Link to Canonical Product</h2>
-              <p className="text-xs text-zinc-400">
-                Map raw receipt text to an existing grocery item
+        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="font-display font-semibold text-[18px] text-[var(--text-primary)]">
+              Match to pantry product
+            </h2>
+            {currentProductName && (
+              <p className="text-[13px] text-[var(--text-muted)] truncate">
+                Currently matched to {currentProductName}
               </p>
-            </div>
+            )}
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            aria-label="Close product search"
+            className="w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Search Box */}
-        <div className="p-4 border-b border-zinc-800/80 bg-zinc-950/40">
+        {/* Search Input + Barcode Lookup */}
+        <div className="p-4 border-b border-[var(--border)] bg-[var(--bg-page)]/50 space-y-2.5">
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-500">
-                <Search className="w-4 h-4" />
-              </div>
+              <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 ref={inputRef}
                 type="text"
                 value={query}
-                onChange={(e) => handleQueryChange(e.target.value)}
-                placeholder="Search product name (e.g. Leche Entera, Arroz)..."
-                className="w-full pl-10 pr-9 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"
+                onChange={(e) => {
+                  setBarcodeResults(null);
+                  setQuery(e.target.value);
+                }}
+                placeholder="Search your pantry products..."
+                className="w-full h-10 pl-10 pr-9 rounded-full bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
               />
-              {isLoading && (
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center text-zinc-500">
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                </div>
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBarcodeResults(null);
+                    setQuery("");
+                  }}
+                  aria-label="Clear search"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] p-1 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
 
             <button
               type="button"
               onClick={() => setScannerOpen(true)}
-              title="Secondary barcode / EAN lookup"
+              title="Scan barcode / EAN"
               aria-label="Scan barcode"
-              className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-400 hover:text-emerald-400 transition-colors whitespace-nowrap shrink-0"
+              className="w-10 h-10 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--primary)] inline-flex items-center justify-center whitespace-nowrap shrink-0 transition-colors cursor-pointer"
             >
-              <ScanBarcode className="w-4 h-4" />
+              <ScanBarcode className="w-4 h-4 shrink-0" />
             </button>
           </div>
 
           {barcodeMatch && (
-            <div className="mt-2.5 p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/5 text-xs space-y-2">
+            <div className="p-3 rounded-xl border border-[var(--primary)]/30 bg-[var(--primary-tint)]/60 text-[13px] space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[11px] text-emerald-400 tabular-nums">
+                <span className="font-semibold text-[var(--primary)] tabular-nums">
                   EAN {barcodeMatch.ean}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setBarcodeMatch(null)}
-                  className="text-zinc-500 hover:text-zinc-300"
+                  onClick={() => {
+                    setBarcodeMatch(null);
+                    setBarcodeResults(null);
+                  }}
+                  className="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-0.5 cursor-pointer"
                   aria-label="Dismiss barcode result"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -229,16 +272,16 @@ export function ProductSearchModal({
               </div>
               {barcodeMatch.offMatch ? (
                 <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0 space-y-0.5">
-                    <div className="font-semibold text-white truncate">
+                  <div className="min-w-0 space-y-1">
+                    <div className="font-semibold text-[var(--text-primary)] truncate">
                       {barcodeMatch.offMatch.productName}
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-zinc-400">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--text-muted)]">
                       {barcodeMatch.offMatch.brand && (
                         <span>{barcodeMatch.offMatch.brand}</span>
                       )}
                       {barcodeMatch.offMatch.rawQuantityText && (
-                        <span className="text-emerald-300 font-semibold">
+                        <span className="font-semibold text-[var(--primary)] tabular-nums">
                           {barcodeMatch.offMatch.rawQuantityText}
                         </span>
                       )}
@@ -247,7 +290,9 @@ export function ProductSearchModal({
                           barcodeMatch.offMatch?.nutrition?.nutriScore
                         );
                         return ns ? (
-                          <span className={`px-1 rounded border ${ns.className}`}>
+                          <span
+                            className={`px-1.5 py-0.5 rounded-full border text-[13px] leading-none font-semibold ${ns.className}`}
+                          >
                             NS {ns.letter}
                           </span>
                         ) : null;
@@ -257,7 +302,9 @@ export function ProductSearchModal({
                           barcodeMatch.offMatch?.nutrition?.novaGroup
                         );
                         return nova ? (
-                          <span className={`px-1 rounded border ${nova.className}`}>
+                          <span
+                            className={`px-1.5 py-0.5 rounded-full border text-[13px] leading-none font-semibold ${nova.className}`}
+                          >
                             {nova.shortLabel}
                           </span>
                         ) : null;
@@ -271,117 +318,86 @@ export function ProductSearchModal({
                         onApplyBarcodeLookup(barcodeMatch.offMatch!);
                         onClose();
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-[11px] font-bold whitespace-nowrap shrink-0"
+                      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
                     >
-                      <Check className="w-3 h-3" />
-                      <span>Use Details</span>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Use details</span>
                     </button>
                   )}
                 </div>
               ) : (
-                <p className="text-[11px] text-amber-300 font-mono">
+                <p className="text-[13px] text-[var(--accent)]">
                   {barcodeMatch.error || "No OpenFoodFacts match found."}
                 </p>
               )}
             </div>
           )}
-
-          {currentProductName && (
-            <div className="mt-2 text-[11px] text-zinc-400 flex items-center justify-between">
-              <span>Current mapping: <strong className="text-zinc-200">{currentProductName}</strong></span>
-              <button
-                type="button"
-                onClick={() => {
-                  onSwitchToCreateNew();
-                  onClose();
-                }}
-                className="text-emerald-400 hover:text-emerald-300 font-semibold transition-colors flex items-center gap-1"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Create as new product</span>
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* Results List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1 divide-y divide-zinc-800/40">
-          {results.length === 0 && !isLoading && (
-            <div className="p-8 text-center space-y-3">
-              <p className="text-xs text-zinc-400">
-                No existing products match &ldquo;{query}&rdquo;.
+        {/* Results */}
+        <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)]">
+          {isLoading ? (
+            <div className="py-10 flex items-center justify-center gap-2 text-[14px] text-[var(--text-muted)]">
+              <Loader2 className="w-4 h-4 animate-spin text-[var(--primary)]" />
+              Searching products...
+            </div>
+          ) : displayedResults.length === 0 ? (
+            <div className="py-10 px-5 text-center space-y-2">
+              <p className="text-[14px] font-medium text-[var(--text-primary)]">
+                No matching products found
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  onSwitchToCreateNew();
-                  onClose();
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-xs transition-all shadow-md shadow-emerald-500/20"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Create &ldquo;{query || "New Product"}&rdquo; instead</span>
-              </button>
+              <p className="text-[13px] text-[var(--text-muted)]">
+                You can create a new product entry for this receipt item below.
+              </p>
             </div>
+          ) : (
+            displayedResults.map((prod) => (
+              <button
+                key={prod.id}
+                type="button"
+                onClick={() => onSelectProduct(prod)}
+                className="w-full text-left px-5 py-3 flex items-center justify-between gap-3 hover:bg-[var(--bg-subtle)]/70 transition-colors cursor-pointer"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-1.5 font-medium text-[14px] text-[var(--text-primary)] truncate">
+                    {prod.isStaple && (
+                      <Star className="w-3.5 h-3.5 text-[var(--accent)] fill-current shrink-0" />
+                    )}
+                    <span className="truncate">{prod.displayName}</span>
+                    {prod.matchReason && (
+                      <span className="px-2 py-0.5 rounded-full bg-[var(--primary-tint)] text-[var(--primary)] border border-[var(--primary)]/25 text-[13px] leading-none font-medium whitespace-nowrap shrink-0">
+                        {prod.matchReason}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[13px] text-[var(--text-muted)]">
+                    {prod.category} · priced per {normalizeUnit(prod.baseUnit)}
+                  </div>
+                </div>
+                <span className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--primary)] shrink-0">
+                  <Check className="w-4 h-4" />
+                  Select
+                </span>
+              </button>
+            ))
           )}
-
-          {results.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => {
-                onSelectProduct(p);
-                onClose();
-              }}
-              className="w-full p-2.5 rounded-xl hover:bg-zinc-800/60 text-left transition-colors flex items-center justify-between group"
-            >
-              <div className="space-y-0.5">
-                <div className="text-xs font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors flex items-center gap-1.5">
-                  <span>{p.displayName}</span>
-                  {p.isStaple && (
-                    <span className="text-[10px] text-amber-400" title="Staple Basket Item">
-                      ⭐
-                    </span>
-                  )}
-                  {p.matchReason && (
-                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono whitespace-nowrap shrink-0">
-                      {p.matchReason}
-                    </span>
-                  )}
-                </div>
-                <div className="text-[10px] text-zinc-400">
-                  {p.category}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded bg-zinc-800 text-[10px] font-mono text-zinc-300 border border-zinc-700/60">
-                  {p.baseUnit}
-                </span>
-                <span className="text-xs text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity font-semibold">
-                  Select →
-                </span>
-              </div>
-            </button>
-          ))}
         </div>
 
-        {/* Footer Actions */}
-        <div className="p-3 border-t border-zinc-800 bg-zinc-950/60 flex items-center justify-between text-xs">
+        {/* Footer */}
+        <div className="px-5 py-3.5 border-t border-[var(--border)] bg-[var(--bg-page)]/60 flex items-center justify-between gap-3">
           <button
             type="button"
-            onClick={() => {
-              onSwitchToCreateNew();
-              onClose();
-            }}
-            className="text-zinc-400 hover:text-emerald-400 transition-colors flex items-center gap-1.5"
+            onClick={onSwitchToCreateNew}
+            className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Switch to Create New</span>
+            <Plus className="w-4 h-4" />
+            Create new pantry product
           </button>
+
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors text-xs font-medium"
+            className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
           >
             Cancel
           </button>

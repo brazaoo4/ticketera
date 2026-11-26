@@ -211,26 +211,21 @@ export default async function ReceiptReviewPage({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Top Breadcrumbs */}
+    <div className="max-w-[1160px] mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
+      {/* Top Breadcrumb Bar */}
       <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-          <Link
-            href="/my-receipts"
-            className="hover:text-zinc-200 transition-colors flex items-center gap-1"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Receipts</span>
-          </Link>
-          <span>/</span>
-          <span className="text-emerald-400 font-semibold">
-            Review Receipt #{receipt.id.slice(-8)}
-          </span>
-        </div>
+        <Link
+          href="/my-receipts"
+          className="inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0"
+        >
+          <ArrowLeft className="w-4 h-4 shrink-0" />
+          <span>Back to receipts</span>
+        </Link>
 
         {pendingReviewCount > 0 && (
-          <span className="text-xs font-mono px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/20 font-semibold whitespace-nowrap shrink-0">
-            Review Queue: {pendingReviewCount} {pendingReviewCount === 1 ? "pending" : "pending"}
+          <span className="text-[13px] font-medium text-[var(--accent)] tabular-nums whitespace-nowrap shrink-0">
+            {pendingReviewCount}{" "}
+            {pendingReviewCount === 1 ? "receipt" : "receipts"} waiting for review
           </span>
         )}
       </div>

@@ -1,26 +1,19 @@
 import React from "react";
+import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { redirect } from "next/navigation";
-import { Shield, Users, CheckCircle, FileText } from "lucide-react";
-import { UserManagementClient } from "./user-management-client";
 import { AdminHeaderTabs } from "@/components/admin/admin-header-tabs";
+import { UserManagementClient } from "./user-management-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminUsersPage() {
   const session = await auth();
-
-  if (!session?.user) {
-    redirect("/login?callbackUrl=/admin/users");
-  }
-
-  if (session.user.role !== "ADMIN") {
+  if (!session?.user || session.user.role !== "ADMIN") {
     redirect("/");
   }
 
   const users = await prisma.user.findMany({
-    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       username: true,
@@ -31,86 +24,69 @@ export default async function AdminUsersPage() {
         select: { receipts: true },
       },
     },
+    orderBy: { createdAt: "desc" },
   });
 
-  const totalUsers = users.length;
-  const adminCount = users.filter((u) => u.role === "ADMIN").length;
-  const activeCount = users.filter((u) => u.enabled).length;
-  const totalReceipts = users.reduce((acc, u) => acc + u._count.receipts, 0);
-
-  // Serialize dates for client component
   const serializedUsers = users.map((u) => ({
     ...u,
+    role: u.role as "ADMIN" | "USER",
     createdAt: u.createdAt.toISOString(),
   }));
 
+  const totalUsers = users.length;
+  const adminCount = users.filter((u) => u.role === "ADMIN").length;
+  const enabledCount = users.filter((u) => u.enabled).length;
+  const totalReceipts = users.reduce((acc, u) => acc + u._count.receipts, 0);
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Top Banner / Breadcrumb */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-6">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-            <span>ADMINISTRATION</span>
-            <span>/</span>
-            <span className="text-emerald-400">USERS & ACCESS</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white flex items-center gap-2.5">
-            <Shield className="w-6 h-6 text-emerald-400" />
-            <span>User Management</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-zinc-400">
-            Account provisioning, password resets, and role permissions.
-          </p>
-        </div>
+    <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-7 sm:py-10 space-y-6">
+      <div className="space-y-1.5">
+        <h1 className="font-display font-bold text-[28px] sm:text-[34px] leading-tight text-[var(--text-primary)]">
+          Settings and administration
+        </h1>
+        <p className="text-[14px] text-[var(--text-muted)]">
+          Manage household accounts, roles, password resets, and sign-in access.
+        </p>
       </div>
 
-      {/* Admin Navigation Tabs */}
       <AdminHeaderTabs />
 
-      {/* KPI Stats Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-mono uppercase">Total Accounts</span>
-            <Users className="w-4 h-4 text-emerald-400" />
+      {/* 4-Column Hairline Metrics Strip */}
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] grid grid-cols-2 lg:grid-cols-4 overflow-hidden">
+        <div className="p-4 sm:p-5 space-y-1">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Total accounts
           </div>
-          <div className="text-2xl font-bold font-mono text-white tabular-nums">
+          <div className="font-display font-bold text-[24px] tabular-nums text-[var(--text-primary)]">
             {totalUsers}
           </div>
         </div>
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-mono uppercase">Administrators</span>
-            <Shield className="w-4 h-4 text-emerald-400" />
+        <div className="p-4 sm:p-5 space-y-1 border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Administrators
           </div>
-          <div className="text-2xl font-bold font-mono text-white tabular-nums">
+          <div className="font-display font-bold text-[24px] tabular-nums text-[var(--text-primary)]">
             {adminCount}
           </div>
         </div>
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-mono uppercase">Active Accounts</span>
-            <CheckCircle className="w-4 h-4 text-emerald-400" />
+        <div className="p-4 sm:p-5 space-y-1 border-t lg:border-t-0 lg:border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Active accounts
           </div>
-          <div className="text-2xl font-bold font-mono text-white tabular-nums">
-            {activeCount}
+          <div className="font-display font-bold text-[24px] tabular-nums text-[var(--positive)]">
+            {enabledCount}
           </div>
         </div>
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-mono uppercase">Receipts Uploaded</span>
-            <FileText className="w-4 h-4 text-emerald-400" />
+        <div className="p-4 sm:p-5 space-y-1 border-t lg:border-t-0 border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Receipts uploaded
           </div>
-          <div className="text-2xl font-bold font-mono text-white tabular-nums">
+          <div className="font-display font-bold text-[24px] tabular-nums text-[var(--text-primary)]">
             {totalReceipts}
           </div>
         </div>
       </div>
 
-      {/* Interactive User Table & Modals */}
       <UserManagementClient
         users={serializedUsers}
         currentUserId={session.user.id}

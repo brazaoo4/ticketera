@@ -5,11 +5,11 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCw,
-  Maximize2,
+  RotateCcw,
   FileText,
   ExternalLink,
-  Download,
-  Loader2,
+  X,
+  ImageOff,
 } from "lucide-react";
 
 interface ReceiptViewerProps {
@@ -25,163 +25,156 @@ interface ReceiptViewerProps {
 export function ReceiptViewer({
   receiptId,
   sourceFile,
-  hasOriginalPdf,
+  hasOriginalPdf = false,
   fileVersion,
-  isDigitalDia,
+  isDigitalDia = false,
+  isMobileModal = false,
+  onCloseMobileModal,
 }: ReceiptViewerProps) {
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
-  const [imageError, setImageError] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [imgError, setImgError] = useState(false);
 
-  const isPdfOrHasPdf = sourceFile.toLowerCase().endsWith(".pdf") || Boolean(hasOriginalPdf);
-  const fileUrl = `/api/receipts/${receiptId}/file`;
-  const imageUrl = fileVersion ? `${fileUrl}?v=${encodeURIComponent(fileVersion)}` : fileUrl;
+  const isSourcePdfOnly =
+    sourceFile.toLowerCase().endsWith(".pdf") && !fileVersion && !hasOriginalPdf;
 
-  const handleZoomIn = () => setZoom((prev) => Math.min(prev + 0.25, 3));
-  const handleZoomOut = () => setZoom((prev) => Math.max(prev - 0.25, 0.5));
-  const handleReset = () => {
-    setZoom(1);
-    setRotation(0);
-  };
-  const handleRotate = () => setRotation((prev) => (prev + 90) % 360);
+  const imageUrl = `/api/receipts/${receiptId}/file${
+    fileVersion ? `?v=${encodeURIComponent(fileVersion)}` : ""
+  }`;
+  const originalPdfUrl = `/api/receipts/${receiptId}/file?original=true`;
 
   return (
-    <div className="flex flex-col h-full rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden shadow-xl">
-      {/* Viewer Header & Controls */}
-      <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/80 px-3.5 py-2 text-xs">
-        <div className="flex items-center gap-2 text-zinc-300 font-medium">
-          <FileText className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="truncate max-w-[140px] sm:max-w-[200px]">
-            {isPdfOrHasPdf
-              ? "Digital PDF Receipt"
-              : isDigitalDia
-              ? "Digital Dia Receipt"
-              : "Original Scanned Photo"}
+    <div
+      className={`flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden ${
+        isMobileModal ? "h-full max-h-[90vh]" : "h-[calc(100vh-140px)] min-h-[520px]"
+      }`}
+    >
+      {/* Controls Bar */}
+      <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between gap-2 bg-[var(--bg-page)]/60 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="w-4 h-4 text-[var(--primary)] shrink-0" />
+          <span className="font-display font-semibold text-[15px] text-[var(--text-primary)] truncate">
+            {isDigitalDia ? "Digital receipt preview" : "Original receipt"}
           </span>
-          {isPdfOrHasPdf && (
-            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono">
-              PDF
-            </span>
-          )}
-          {!isPdfOrHasPdf && isDigitalDia && (
-            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono">
-              DIA
-            </span>
-          )}
         </div>
 
-        {/* Zoom & Rotate Toolbar */}
-        <div className="flex items-center gap-1">
-          {isPdfOrHasPdf && (
-            <a
-              href={`${fileUrl}?original=true&download=true`}
-              download={`receipt-${receiptId}.pdf`}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-emerald-400 text-[11px] font-medium transition-colors mr-1"
-              title="Download original PDF"
-              aria-label="Download original PDF"
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.max(0.75, +(z - 0.25).toFixed(2)))}
+            aria-label="Zoom out"
+            className="w-8 h-8 rounded-lg hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center cursor-pointer"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <span className="text-[13px] tabular-nums text-[var(--text-muted)] w-11 text-center">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.min(2.5, +(z + 0.25).toFixed(2)))}
+            aria-label="Zoom in"
+            className="w-8 h-8 rounded-lg hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center cursor-pointer"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setRotation((r) => (r + 90) % 360)}
+            aria-label="Rotate 90 degrees"
+            className="w-8 h-8 rounded-lg hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center cursor-pointer"
+          >
+            <RotateCw className="w-4 h-4" />
+          </button>
+
+          {(zoom !== 1 || rotation !== 0) && (
+            <button
+              type="button"
+              onClick={() => {
+                setZoom(1);
+                setRotation(0);
+              }}
+              aria-label="Reset view"
+              className="w-8 h-8 rounded-lg hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Original PDF</span>
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          )}
+
+          {hasOriginalPdf && (
+            <a
+              href={originalPdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-1 h-8 px-2.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+            >
+              <span>PDF</span>
+              <ExternalLink className="w-3.5 h-3.5" />
             </a>
           )}
-          {!imageError && (
-            <>
-              <button
-                type="button"
-                onClick={handleZoomOut}
-                disabled={zoom <= 0.5}
-                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white disabled:opacity-40 transition-colors"
-                title="Zoom out"
-                aria-label="Zoom out"
-              >
-                <ZoomOut className="w-3.5 h-3.5" />
-              </button>
-              <span className="text-[11px] font-mono text-zinc-400 px-1 tabular-nums">
-                {Math.round(zoom * 100)}%
-              </span>
-              <button
-                type="button"
-                onClick={handleZoomIn}
-                disabled={zoom >= 3}
-                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white disabled:opacity-40 transition-colors"
-                title="Zoom in"
-                aria-label="Zoom in"
-              >
-                <ZoomIn className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={handleRotate}
-                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors ml-1"
-                title="Rotate 90°"
-                aria-label="Rotate 90 degrees"
-              >
-                <RotateCw className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={handleReset}
-                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
-                title="Reset view"
-                aria-label="Reset view"
-              >
-                <Maximize2 className="w-3.5 h-3.5" />
-              </button>
-            </>
+
+          {isMobileModal && onCloseMobileModal && (
+            <button
+              type="button"
+              onClick={onCloseMobileModal}
+              aria-label="Close receipt image"
+              className="ml-1 w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
           )}
-          <a
-            href={isPdfOrHasPdf ? `${fileUrl}?original=true` : imageUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-emerald-400 transition-colors ml-1"
-            title="Open in new tab"
-            aria-label="Open original file in new tab"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
         </div>
       </div>
 
-      {/* Viewer Canvas Area */}
-      <div className="relative flex-1 min-h-[460px] max-h-[75vh] overflow-auto bg-zinc-950 p-4 flex items-center justify-center select-none">
-        {imageError ? (
-          isPdfOrHasPdf ? (
-            <div className="w-full h-full min-h-[500px] flex flex-col items-center justify-center">
-              <iframe
-                src={`${fileUrl}?original=true#toolbar=0&navpanes=0`}
-                title="PDF Receipt Document"
-                className="w-full h-full min-h-[500px] rounded-lg border border-zinc-800 bg-zinc-900"
-              />
+      {/* Scrollable Thermal-Paper Backdrop */}
+      <div className="flex-1 overflow-auto bg-[var(--paper-bg)] p-4 flex items-start justify-center">
+        {isSourcePdfOnly ? (
+          <iframe
+            src={originalPdfUrl}
+            title="Original receipt PDF"
+            className="w-full h-full min-h-[460px] rounded-lg border border-[var(--paper-rule)] bg-[var(--paper-bg)]"
+          />
+        ) : imgError ? (
+          <div className="my-auto max-w-xs text-center space-y-3 py-10">
+            <div className="w-11 h-11 rounded-2xl border border-[var(--paper-rule)] bg-[var(--bg-card)] text-[var(--paper-muted)] flex items-center justify-center mx-auto">
+              <ImageOff className="w-5 h-5" />
             </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center p-6 text-zinc-500 space-y-2">
-              <FileText className="w-10 h-10 text-zinc-600" />
-              <p className="text-xs">Receipt preview not available</p>
+            <div className="space-y-1">
+              <p className="text-[14px] font-semibold text-[var(--paper-ink)]">
+                Receipt photo unavailable
+              </p>
+              <p className="text-[13px] text-[var(--paper-muted)]">
+                {isDigitalDia
+                  ? "This synced Club Dia purchase uses itemized store data rather than a camera photo."
+                  : "No saved camera image was found on disk for this receipt."}
+              </p>
             </div>
-          )
+            {hasOriginalPdf && (
+              <a
+                href={originalPdfUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-[var(--primary)] text-[var(--primary-on)] text-[13px] font-semibold"
+              >
+                Open original PDF
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+          </div>
         ) : (
           <div
-            className="transition-transform duration-150 ease-out origin-center flex items-center justify-center"
+            className="transition-transform duration-150 origin-top"
             style={{
               transform: `scale(${zoom}) rotate(${rotation}deg)`,
             }}
           >
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60 z-10 rounded-lg">
-                <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
-              </div>
-            )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={imageUrl}
-              alt="Receipt evidence"
-              onLoad={() => setIsLoading(false)}
-              onError={() => {
-                setIsLoading(false);
-                setImageError(true);
-              }}
-              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl pointer-events-auto"
+              alt="Scanned supermarket receipt"
+              onError={() => setImgError(true)}
+              className="max-w-full rounded-lg border border-[var(--paper-rule)] shadow-sm select-none"
             />
           </div>
         )}
