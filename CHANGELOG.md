@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.0](https://github.com/brazaoo4/ticketera/compare/v2.6.0...v3.0.0) (2026-11-26)
+
+
+### Features
+
+* **ui:** redesign Ticketera frontend with Sunny & Evening Pantry theme ([c18ed24](https://github.com/brazaoo4/ticketera/commit/c18ed247b0fea448ddaa141492452dbd2b22348f))
+* **ui:** Ticketera 3.0 — Sunny & Evening Pantry redesign ([4a1a22b](https://github.com/brazaoo4/ticketera/commit/4a1a22bb9ac3aacc1ec8311dbea2ffea6ab75e71))
+
 ## [2.6.0](https://github.com/brazaoo4/ticketera/compare/v2.5.1...v2.6.0) (2026-11-24)
 
 
