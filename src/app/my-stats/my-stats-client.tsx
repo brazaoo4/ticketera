@@ -88,6 +88,7 @@ interface MyStatsClientProps {
   shrinkflationIncidents?: ShrinkflationIncident[];
   initialBudgets?: UserBudgetTarget[];
   untaggedFoodProductCount?: number;
+  unmatchedFoodProductCount?: number;
 }
 
 type Timeframe = "3M" | "6M" | "1Y" | "All";
@@ -171,6 +172,7 @@ export function MyStatsClient({
   shrinkflationIncidents = [],
   initialBudgets = [],
   untaggedFoodProductCount = 0,
+  unmatchedFoodProductCount = 0,
 }: MyStatsClientProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>("1Y");
   const [chartMode, setChartMode] = useState<ChartMode>("stacked");
@@ -1144,6 +1146,7 @@ export function MyStatsClient({
           kcalPer100g: i.kcalPer100g,
         }))}
         untaggedFoodProductCount={untaggedFoodProductCount}
+        unmatchedFoodProductCount={unmatchedFoodProductCount}
       />
 
       {/* Most Purchased Groceries (Spacious 3-Column Grid) */}

@@ -1,18 +1,116 @@
 import {
   type CatalogLookupResult,
   STORE_BRAND_MAP,
+  buildNutritionSearchQueries,
   extractOpenFoodFactsNutrition,
   normalizeBarcode,
   parseSpanishCatalogQuantity,
+  pickBestNutritionMatch,
 } from "./parser";
 
 const OFF_FIELDS =
   "code,product_name,product_name_es,brands,quantity,nutriscore_grade,nutrition_grades,nova_group,nova_groups,nutriments";
+const OFF_TIMEOUT_MS = 8000;
 
 function getUserAgent(): string {
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL || "https://github.com/brazaoo4/ticketera";
-  return `Ticketera/2.5.0 (+${appUrl})`;
+  return `Ticketera/3.0.0 (+${appUrl})`;
+}
+
+function mapOffProductToLookupResult(
+  p: Record<string, unknown>,
+  options: { requireQuantity: boolean; fallbackEan?: string }
+): CatalogLookupResult | null {
+  const productName =
+    (p.product_name_es as string) || (p.product_name as string) || "";
+  if (!productName) return null;
+
+  const brand = (p.brands as string) || "";
+  const rawQuantityText = (p.quantity as string) || "";
+  const parsed = rawQuantityText
+    ? parseSpanishCatalogQuantity(rawQuantityText)
+    : null;
+  if (options.requireQuantity && !parsed) return null;
+
+  const nutrition = extractOpenFoodFactsNutrition(
+    options.fallbackEan ? { ...p, code: options.fallbackEan } : p
+  );
+  const ean =
+    options.fallbackEan ||
+    nutrition?.ean ||
+    normalizeBarcode(
+      typeof p.code === "string" || typeof p.code === "number"
+        ? String(p.code)
+        : null
+    );
+
+  return {
+    productName: productName.trim(),
+    brand: brand.trim(),
+    rawQuantityText: rawQuantityText.trim(),
+    baseUnit: parsed?.baseUnit ?? "UNIT",
+    unitMeasurePerPack: parsed?.unitMeasurePerPack ?? 1,
+    hasParsedQuantity: Boolean(parsed),
+    ean,
+    nutrition,
+  };
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+async function fetchOffSearchJson(
+  query: string,
+  pageSize: number
+): Promise<{ ok: boolean; products: Array<Record<string, unknown>>; hadError: boolean }> {
+  const offUrl = `https://es.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(
+    query
+  )}&search_simple=1&action=process&json=1&page_size=${pageSize}&fields=${encodeURIComponent(
+    OFF_FIELDS
+  )}`;
+
+  let hadError = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    try {
+      const response = await fetch(offUrl, {
+        headers: {
+          "User-Agent": getUserAgent(),
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(OFF_TIMEOUT_MS),
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as {
+          products?: Array<Record<string, unknown>>;
+        };
+        return {
+          ok: true,
+          products: Array.isArray(data.products) ? data.products : [],
+          hadError: false,
+        };
+      }
+
+      hadError = isRetryableStatus(response.status);
+      if (!hadError) {
+        return { ok: false, products: [], hadError: true };
+      }
+    } catch (fetchErr) {
+      hadError = true;
+      console.warn(
+        `[CatalogLookup] Fetch attempt ${attempt + 1} failed for query:`,
+        query,
+        fetchErr
+      );
+    }
+  }
+
+  return { ok: false, products: [], hadError };
 }
 
 /**
@@ -46,30 +144,10 @@ export async function searchOpenFoodFacts(params: {
   let rawProducts: Array<Record<string, unknown>> = [];
 
   for (const q of queriesToTry) {
-    try {
-      const offUrl = `https://es.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(
-        q
-      )}&search_simple=1&action=process&json=1&page_size=6&fields=${encodeURIComponent(
-        OFF_FIELDS
-      )}`;
-
-      const response = await fetch(offUrl, {
-        headers: {
-          "User-Agent": getUserAgent(),
-          Accept: "application/json",
-        },
-        signal: AbortSignal.timeout(4500),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (Array.isArray(data.products) && data.products.length > 0) {
-          rawProducts = data.products;
-          break;
-        }
-      }
-    } catch (fetchErr) {
-      console.warn("[CatalogLookup] Fetch attempt failed for query:", q, fetchErr);
+    const res = await fetchOffSearchJson(q, 6);
+    if (res.ok && res.products.length > 0) {
+      rawProducts = res.products;
+      break;
     }
   }
 
@@ -78,49 +156,82 @@ export async function searchOpenFoodFacts(params: {
   const requireQuantity = params.requireQuantity ?? true;
 
   for (const p of rawProducts) {
-    const productName =
-      (p.product_name_es as string) || (p.product_name as string) || "";
-    const brand = (p.brands as string) || "";
-    const rawQuantityText = (p.quantity as string) || "";
+    const mapped = mapOffProductToLookupResult(p, { requireQuantity });
+    if (!mapped) continue;
 
-    if (!productName) continue;
-
-    const parsed = rawQuantityText ? parseSpanishCatalogQuantity(rawQuantityText) : null;
-    if (requireQuantity && !parsed) continue;
-
-    const nutrition = extractOpenFoodFactsNutrition(p);
-    const ean =
-      nutrition?.ean ||
-      normalizeBarcode(
-        typeof p.code === "string" || typeof p.code === "number"
-          ? String(p.code)
-          : null
-      );
-
-    const effectiveUnit = parsed?.baseUnit ?? "UNIT";
-    const effectiveMeasure = parsed?.unitMeasurePerPack ?? 1;
-
-    const dedupeKey = `${effectiveUnit}__${effectiveMeasure}__${productName
+    const dedupeKey = `${mapped.baseUnit}__${mapped.unitMeasurePerPack}__${mapped.productName
       .toLowerCase()
       .slice(0, 20)}`;
     if (seenCombos.has(dedupeKey)) continue;
     seenCombos.add(dedupeKey);
 
-    matches.push({
-      productName: productName.trim(),
-      brand: brand.trim(),
-      rawQuantityText: rawQuantityText.trim(),
-      baseUnit: effectiveUnit,
-      unitMeasurePerPack: effectiveMeasure,
-      hasParsedQuantity: Boolean(parsed),
-      ean,
-      nutrition,
-    });
-
+    matches.push(mapped);
     if (matches.length >= 6) break;
   }
 
   return matches;
+}
+
+/**
+ * Queries OpenFoodFacts specifically for nutritional metadata using barcode fast-path
+ * followed by category-aware query generation, retry-once resilience, and fresh-food filtering.
+ */
+export async function searchOpenFoodFactsForNutrition(params: {
+  query: string;
+  category?: string;
+  store?: string;
+  ean?: string | null;
+}): Promise<{ match: CatalogLookupResult | null; hadNetworkError: boolean }> {
+  const parsedEan = normalizeBarcode(params.ean);
+  if (parsedEan) {
+    const byBarcode = await lookupOpenFoodFactsByBarcode(parsedEan);
+    if (
+      byBarcode?.nutrition &&
+      (byBarcode.nutrition.nutriScore !== null ||
+        byBarcode.nutrition.novaGroup !== null ||
+        byBarcode.nutrition.proteinPer100g !== null ||
+        byBarcode.nutrition.kcalPer100g !== null)
+    ) {
+      return { match: byBarcode, hadNetworkError: false };
+    }
+  }
+
+  const queries = buildNutritionSearchQueries(
+    params.query,
+    params.category,
+    params.store
+  );
+  if (queries.length === 0) {
+    return { match: null, hadNetworkError: false };
+  }
+
+  let anyRequestSucceeded = false;
+  let anyNetworkError = false;
+
+  for (const q of queries) {
+    const res = await fetchOffSearchJson(q, 12);
+    if (res.ok) {
+      anyRequestSucceeded = true;
+      const mapped = res.products
+        .map((p) => mapOffProductToLookupResult(p, { requireQuantity: false }))
+        .filter((item): item is CatalogLookupResult => item !== null);
+      const best = pickBestNutritionMatch(
+        params.query,
+        params.category || "Other",
+        mapped
+      );
+      if (best) {
+        return { match: best, hadNetworkError: false };
+      }
+    } else if (res.hadError) {
+      anyNetworkError = true;
+    }
+  }
+
+  return {
+    match: null,
+    hadNetworkError: !anyRequestSucceeded && anyNetworkError,
+  };
 }
 
 /**
@@ -145,7 +256,7 @@ export async function lookupOpenFoodFactsByBarcode(
           "User-Agent": getUserAgent(),
           Accept: "application/json",
         },
-        signal: AbortSignal.timeout(4500),
+        signal: AbortSignal.timeout(OFF_TIMEOUT_MS),
       });
 
       if (!response.ok) continue;
@@ -156,28 +267,11 @@ export async function lookupOpenFoodFactsByBarcode(
 
       if (data.status !== 1 || !data.product) continue;
 
-      const p = data.product;
-      const productName =
-        (p.product_name_es as string) || (p.product_name as string) || "";
-      if (!productName) continue;
-
-      const brand = (p.brands as string) || "";
-      const rawQuantityText = (p.quantity as string) || "";
-      const parsed = rawQuantityText
-        ? parseSpanishCatalogQuantity(rawQuantityText)
-        : null;
-      const nutrition = extractOpenFoodFactsNutrition({ ...p, code: ean });
-
-      return {
-        productName: productName.trim(),
-        brand: brand.trim(),
-        rawQuantityText: rawQuantityText.trim(),
-        baseUnit: parsed?.baseUnit ?? "UNIT",
-        unitMeasurePerPack: parsed?.unitMeasurePerPack ?? 1,
-        hasParsedQuantity: Boolean(parsed),
-        ean,
-        nutrition,
-      };
+      const mapped = mapOffProductToLookupResult(data.product, {
+        requireQuantity: false,
+        fallbackEan: ean,
+      });
+      if (mapped) return mapped;
     } catch (err) {
       console.warn("[CatalogLookup] Barcode fetch failed:", host, ean, err);
     }
