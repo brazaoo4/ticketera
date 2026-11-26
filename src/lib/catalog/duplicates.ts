@@ -17,6 +17,44 @@ export interface DuplicateProductGroup {
   hasBaseUnitMismatch: boolean;
 }
 
+/**
+ * Returns a canonical order-independent key for a pair of product IDs (`min::max`),
+ * or `""` if either ID is empty or both refer to the same product.
+ */
+export function makeDuplicatePairKey(idA: string, idB: string): string {
+  const a = idA.trim();
+  const b = idB.trim();
+  if (!a || !b || a === b) return "";
+  return a < b ? `${a}::${b}` : `${b}::${a}`;
+}
+
+/**
+ * Validates that a key is a canonical `idA::idB` duplicate pair key.
+ */
+export function isValidDuplicatePairKey(key: string): boolean {
+  const parts = key.split("::");
+  if (parts.length !== 2) return false;
+  const canonical = makeDuplicatePairKey(parts[0], parts[1]);
+  return Boolean(canonical) && canonical === key;
+}
+
+/**
+ * Returns all canonical pairwise keys connecting every product in a duplicate cluster.
+ */
+export function getGroupPairKeys(productIds: string[]): string[] {
+  const uniqueIds = Array.from(
+    new Set(productIds.map((id) => id.trim()).filter(Boolean))
+  );
+  const pairs = new Set<string>();
+  for (let i = 0; i < uniqueIds.length; i++) {
+    for (let j = i + 1; j < uniqueIds.length; j++) {
+      const key = makeDuplicatePairKey(uniqueIds[i], uniqueIds[j]);
+      if (key) pairs.add(key);
+    }
+  }
+  return Array.from(pairs).sort();
+}
+
 const PRIVATE_LABEL_BRANDS = new Set([
   "hacendado",
   "milbona",
@@ -158,15 +196,29 @@ function chooseSurvivor(products: DuplicateCandidateProduct[]): DuplicateCandida
 }
 
 /**
- * Groups likely duplicate products into clusters with a recommended survivor product.
+ * Groups likely duplicate products into clusters with a recommended survivor product,
+ * skipping any product pairs previously dismissed by an admin.
  */
 export function findDuplicateProductGroups(
-  products: DuplicateCandidateProduct[]
+  products: DuplicateCandidateProduct[],
+  dismissedPairKeys?: Iterable<string>
 ): DuplicateProductGroup[] {
   if (products.length < 2) return [];
 
+  const dismissed = new Set<string>();
+  if (dismissedPairKeys) {
+    for (const rawKey of dismissedPairKeys) {
+      const parts = String(rawKey).split("::");
+      if (parts.length === 2) {
+        const canonical = makeDuplicatePairKey(parts[0], parts[1]);
+        if (canonical) dismissed.add(canonical);
+      }
+    }
+  }
+
   const n = products.length;
   const parent = Array.from({ length: n }, (_, i) => i);
+  const members = Array.from({ length: n }, (_, i) => [i]);
   const maxPairSim = new Map<number, number>();
 
   const find = (x: number): number => {
@@ -177,25 +229,22 @@ export function findDuplicateProductGroups(
     return x;
   };
 
-  const union = (a: number, b: number, sim: number) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) {
-      parent[rb] = ra;
-      maxPairSim.set(ra, Math.max(maxPairSim.get(ra) || 0, maxPairSim.get(rb) || 0, sim));
-    } else {
-      maxPairSim.set(ra, Math.max(maxPairSim.get(ra) || 0, sim));
-    }
-  };
-
   const normalizedNames = products.map((p) =>
     normalizeProductNameForMatching(p.displayName)
   );
 
+  const edges: Array<{ i: number; j: number; sim: number }> = [];
   for (let i = 0; i < n; i++) {
     if (!normalizedNames[i]) continue;
     for (let j = i + 1; j < n; j++) {
       if (!normalizedNames[j]) continue;
+
+      if (
+        dismissed.size > 0 &&
+        dismissed.has(makeDuplicatePairKey(products[i].id, products[j].id))
+      ) {
+        continue;
+      }
 
       const sameCategory = products[i].category === products[j].category;
       const sim =
@@ -204,9 +253,41 @@ export function findDuplicateProductGroups(
           : computeNameSimilarity(products[i].displayName, products[j].displayName);
 
       if (sim === 1 || (sameCategory && sim >= 0.62) || (!sameCategory && sim >= 0.80)) {
-        union(i, j, sim);
+        edges.push({ i, j, sim });
       }
     }
+  }
+
+  // Merge strongest matches first so a previously dismissed pair cannot be
+  // re-linked transitively through a newly added variant of one side.
+  edges.sort((a, b) => b.sim - a.sim);
+
+  for (const { i, j, sim } of edges) {
+    const ra = find(i);
+    const rb = find(j);
+    if (ra === rb) {
+      maxPairSim.set(ra, Math.max(maxPairSim.get(ra) || 0, sim));
+      continue;
+    }
+
+    if (dismissed.size > 0) {
+      let hasDismissedConflict = false;
+      for (const mA of members[ra]) {
+        for (const mB of members[rb]) {
+          if (dismissed.has(makeDuplicatePairKey(products[mA].id, products[mB].id))) {
+            hasDismissedConflict = true;
+            break;
+          }
+        }
+        if (hasDismissedConflict) break;
+      }
+      if (hasDismissedConflict) continue;
+    }
+
+    parent[rb] = ra;
+    members[ra].push(...members[rb]);
+    members[rb] = [];
+    maxPairSim.set(ra, Math.max(maxPairSim.get(ra) || 0, maxPairSim.get(rb) || 0, sim));
   }
 
   const clusters = new Map<number, DuplicateCandidateProduct[]>();

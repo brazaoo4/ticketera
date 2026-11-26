@@ -2,6 +2,7 @@ import React from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getDismissedDuplicatePairs } from "@/lib/settings";
 import { AdminHeaderTabs } from "@/components/admin/admin-header-tabs";
 import {
   ProductManagementClient,
@@ -16,21 +17,24 @@ export default async function AdminProductsPage() {
     redirect("/");
   }
 
-  const rawProducts = await prisma.product.findMany({
-    include: {
-      _count: {
-        select: {
-          receiptItems: true,
-          aliases: true,
+  const [rawProducts, storedDismissedPairs] = await Promise.all([
+    prisma.product.findMany({
+      include: {
+        _count: {
+          select: {
+            receiptItems: true,
+            aliases: true,
+          },
         },
       },
-    },
-    orderBy: [
-      { isStaple: "desc" },
-      { receiptItems: { _count: "desc" } },
-      { displayName: "asc" },
-    ],
-  });
+      orderBy: [
+        { isStaple: "desc" },
+        { receiptItems: { _count: "desc" } },
+        { displayName: "asc" },
+      ],
+    }),
+    getDismissedDuplicatePairs(),
+  ]);
 
   const products: ManagedProduct[] = rawProducts.map((p) => ({
     id: p.id,
@@ -56,6 +60,12 @@ export default async function AdminProductsPage() {
     0
   );
   const totalAliases = products.reduce((sum, p) => sum + p.aliasesCount, 0);
+
+  const activeProductIds = new Set(products.map((p) => p.id));
+  const activeDismissedPairs = storedDismissedPairs.filter((pairKey) => {
+    const [a, b] = pairKey.split("::");
+    return Boolean(a && b && activeProductIds.has(a) && activeProductIds.has(b));
+  });
 
   return (
     <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-7 sm:py-10 space-y-6">
@@ -107,7 +117,10 @@ export default async function AdminProductsPage() {
         </div>
       </div>
 
-      <ProductManagementClient initialProducts={products} />
+      <ProductManagementClient
+        initialProducts={products}
+        initialDismissedDuplicatePairs={activeDismissedPairs}
+      />
     </div>
   );
 }

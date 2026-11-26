@@ -5,6 +5,12 @@ import { prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { normalizeBarcode } from "@/lib/catalog/parser";
+import { makeDuplicatePairKey } from "@/lib/catalog/duplicates";
+import {
+  addDismissedDuplicatePairs,
+  pruneDismissedDuplicatePairsForProducts,
+  removeDismissedDuplicatePairs,
+} from "@/lib/settings";
 
 export async function toggleProductStapleAction(productId: string, isStaple: boolean) {
   try {
@@ -276,6 +282,12 @@ export async function mergeProductsBatchAction(
     revalidatePath("/my-stats");
     revalidatePath("/");
 
+    try {
+      await pruneDismissedDuplicatePairsForProducts(uniqueSourceIds);
+    } catch (pruneErr) {
+      console.warn("[mergeProductsBatchAction] Failed to prune dismissed pairs:", pruneErr);
+    }
+
     const summaryText =
       result.mergedCount === 1
         ? `Merged "${result.sourceNames[0]}" into "${result.targetName}" (${result.movedSightingsCount} sightings, ${result.movedAliasesCount} aliases unified).`
@@ -328,6 +340,12 @@ export async function deleteProductAction(productId: string) {
       where: { id: productId },
     });
 
+    try {
+      await pruneDismissedDuplicatePairsForProducts([productId]);
+    } catch (pruneErr) {
+      console.warn("[deleteProductAction] Failed to prune dismissed pairs:", pruneErr);
+    }
+
     revalidatePath("/admin/products");
     revalidatePath("/products");
     revalidatePath("/compare");
@@ -339,6 +357,85 @@ export async function deleteProductAction(productId: string) {
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to delete product.",
+    };
+  }
+}
+
+export async function dismissDuplicatePairsAction(pairKeys: string[]) {
+  try {
+    await requireAdminUser();
+
+    const normalizedPairs = Array.from(
+      new Set(
+        pairKeys
+          .map((raw) => {
+            const parts = String(raw).split("::");
+            return parts.length === 2
+              ? makeDuplicatePairKey(parts[0], parts[1])
+              : "";
+          })
+          .filter(Boolean)
+      )
+    ).sort();
+
+    if (normalizedPairs.length === 0) {
+      return { success: false, error: "No valid duplicate pairs provided." };
+    }
+
+    const dismissedPairs = await addDismissedDuplicatePairs(normalizedPairs);
+    revalidatePath("/admin/products");
+
+    return {
+      success: true,
+      dismissedPairs,
+      addedPairs: normalizedPairs,
+    };
+  } catch (err: unknown) {
+    console.error("[dismissDuplicatePairsAction] Error:", err);
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Failed to discard duplicate suggestions.",
+    };
+  }
+}
+
+export async function restoreDismissedDuplicatesAction(pairKeys?: string[]) {
+  try {
+    await requireAdminUser();
+
+    const normalizedPairs = pairKeys
+      ? Array.from(
+          new Set(
+            pairKeys
+              .map((raw) => {
+                const parts = String(raw).split("::");
+                return parts.length === 2
+                  ? makeDuplicatePairKey(parts[0], parts[1])
+                  : "";
+              })
+              .filter(Boolean)
+          )
+        ).sort()
+      : undefined;
+
+    const dismissedPairs = await removeDismissedDuplicatePairs(normalizedPairs);
+    revalidatePath("/admin/products");
+
+    return {
+      success: true,
+      dismissedPairs,
+    };
+  } catch (err: unknown) {
+    console.error("[restoreDismissedDuplicatesAction] Error:", err);
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Failed to restore dismissed suggestions.",
     };
   }
 }

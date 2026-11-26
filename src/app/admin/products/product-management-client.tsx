@@ -17,6 +17,7 @@ import {
   Wand2,
   ChevronDown,
   ChevronUp,
+  RotateCcw,
 } from "lucide-react";
 import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
 import { normalizeUnit } from "@/lib/format";
@@ -26,10 +27,13 @@ import {
   mergeProductsBatchAction,
   deleteProductAction,
   autoHealLegacyProductsAction,
+  dismissDuplicatePairsAction,
+  restoreDismissedDuplicatesAction,
 } from "./actions";
 import {
   computeNameSimilarity,
   findDuplicateProductGroups,
+  getGroupPairKeys,
 } from "@/lib/catalog/duplicates";
 import { useNativeDialog } from "@/lib/ui/use-native-dialog";
 
@@ -51,11 +55,16 @@ export interface ManagedProduct {
 
 export function ProductManagementClient({
   initialProducts,
+  initialDismissedDuplicatePairs = [],
 }: {
   initialProducts: ManagedProduct[];
+  initialDismissedDuplicatePairs?: string[];
 }) {
   const router = useRouter();
   const [products, setProducts] = useState<ManagedProduct[]>(initialProducts);
+  const [dismissedPairs, setDismissedPairs] = useState<string[]>(
+    initialDismissedDuplicatePairs
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [stapleFilter, setStapleFilter] = useState<
@@ -68,6 +77,10 @@ export function ProductManagementClient({
     Record<string, string>
   >({});
   const [mergingGroupKey, setMergingGroupKey] = useState<string | null>(null);
+  const [dismissingGroupKey, setDismissingGroupKey] = useState<string | null>(
+    null
+  );
+  const [isRestoringDismissed, setIsRestoringDismissed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTargetId, setBulkTargetId] = useState<string>("");
   const [isBulkMerging, setIsBulkMerging] = useState(false);
@@ -111,11 +124,26 @@ export function ProductManagementClient({
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     text: string;
+    undoPairKeys?: string[];
   } | null>(null);
 
-  const duplicateGroups = useMemo(
-    () => findDuplicateProductGroups(products),
+  const activeProductIds = useMemo(
+    () => new Set(products.map((p) => p.id)),
     [products]
+  );
+
+  const activeDismissedPairs = useMemo(
+    () =>
+      dismissedPairs.filter((pairKey) => {
+        const [a, b] = pairKey.split("::");
+        return Boolean(a && b && activeProductIds.has(a) && activeProductIds.has(b));
+      }),
+    [dismissedPairs, activeProductIds]
+  );
+
+  const duplicateGroups = useMemo(
+    () => findDuplicateProductGroups(products, activeDismissedPairs),
+    [products, activeDismissedPairs]
   );
 
   const categories = useMemo(() => {
@@ -414,6 +442,129 @@ export function ProductManagementClient({
     }
   }
 
+  async function handleDismissDuplicateGroup(
+    groupKey: string,
+    clusterProducts: ManagedProduct[]
+  ) {
+    const pairKeys = getGroupPairKeys(clusterProducts.map((p) => p.id));
+    if (pairKeys.length === 0) return;
+
+    const prevSnapshot = dismissedPairs;
+    const optimistic = Array.from(new Set([...dismissedPairs, ...pairKeys])).sort();
+    setDismissedPairs(optimistic);
+    setDismissingGroupKey(groupKey);
+    setFeedback(null);
+
+    try {
+      const res = await dismissDuplicatePairsAction(pairKeys);
+      if (res.success && Array.isArray(res.dismissedPairs)) {
+        setDismissedPairs(res.dismissedPairs);
+        setFeedback({
+          type: "success",
+          text: "Discarded duplicate suggestion.",
+          undoPairKeys: pairKeys,
+        });
+        router.refresh();
+      } else {
+        setDismissedPairs(prevSnapshot);
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not discard duplicate suggestion.",
+        });
+      }
+    } catch {
+      setDismissedPairs(prevSnapshot);
+      setFeedback({
+        type: "error",
+        text: "Could not discard duplicate suggestion right now.",
+      });
+    } finally {
+      setDismissingGroupKey(null);
+    }
+  }
+
+  async function handleDismissAllDuplicateGroups() {
+    const allPairKeys = Array.from(
+      new Set(
+        duplicateGroups.flatMap((g) =>
+          getGroupPairKeys(g.products.map((p) => p.id))
+        )
+      )
+    ).sort();
+    if (allPairKeys.length === 0) return;
+
+    const dismissedCount = duplicateGroups.length;
+    const prevSnapshot = dismissedPairs;
+    const optimistic = Array.from(
+      new Set([...dismissedPairs, ...allPairKeys])
+    ).sort();
+    setDismissedPairs(optimistic);
+    setDismissingGroupKey("__ALL__");
+    setFeedback(null);
+
+    try {
+      const res = await dismissDuplicatePairsAction(allPairKeys);
+      if (res.success && Array.isArray(res.dismissedPairs)) {
+        setDismissedPairs(res.dismissedPairs);
+        setFeedback({
+          type: "success",
+          text: `Discarded ${dismissedCount} duplicate ${
+            dismissedCount === 1 ? "suggestion" : "suggestions"
+          }.`,
+          undoPairKeys: allPairKeys,
+        });
+        router.refresh();
+      } else {
+        setDismissedPairs(prevSnapshot);
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not discard duplicate suggestions.",
+        });
+      }
+    } catch {
+      setDismissedPairs(prevSnapshot);
+      setFeedback({
+        type: "error",
+        text: "Could not discard duplicate suggestions right now.",
+      });
+    } finally {
+      setDismissingGroupKey(null);
+    }
+  }
+
+  async function handleRestoreDismissed(pairKeys?: string[]) {
+    setIsRestoringDismissed(true);
+    setFeedback(null);
+
+    try {
+      const res = await restoreDismissedDuplicatesAction(pairKeys);
+      if (res.success && Array.isArray(res.dismissedPairs)) {
+        setDismissedPairs(res.dismissedPairs);
+        setDuplicatesExpanded(true);
+        setFeedback({
+          type: "success",
+          text:
+            pairKeys && pairKeys.length > 0
+              ? "Restored duplicate suggestion."
+              : "Restored dismissed duplicate suggestions.",
+        });
+        router.refresh();
+      } else {
+        setFeedback({
+          type: "error",
+          text: res.error || "Could not restore dismissed suggestions.",
+        });
+      }
+    } catch {
+      setFeedback({
+        type: "error",
+        text: "Could not restore dismissed suggestions right now.",
+      });
+    } finally {
+      setIsRestoringDismissed(false);
+    }
+  }
+
   async function handleBulkMerge() {
     if (selectedProducts.length < 2 || !effectiveBulkTargetId) return;
     const sourceIds = selectedProducts
@@ -569,14 +720,31 @@ export function ProductManagementClient({
             )}
             <span>{feedback.text}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            aria-label="Dismiss notification"
-            className="p-1 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {feedback.undoPairKeys && feedback.undoPairKeys.length > 0 && (
+              <button
+                type="button"
+                disabled={isRestoringDismissed}
+                onClick={() => void handleRestoreDismissed(feedback.undoPairKeys)}
+                className="h-7 px-3 rounded-full border border-current/25 bg-[var(--bg-card)]/80 hover:bg-[var(--bg-card)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-50 cursor-pointer"
+              >
+                {isRestoringDismissed ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                ) : (
+                  <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                )}
+                Undo
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setFeedback(null)}
+              aria-label="Dismiss notification"
+              className="p-1 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -610,10 +778,31 @@ export function ProductManagementClient({
 
           {duplicatesExpanded && (
             <div className="px-5 pb-5 pt-3 border-t border-[var(--border)] space-y-3 bg-[var(--bg-card)]/60">
-              <p className="text-[13px] text-[var(--text-muted)]">
-                Choose the product name you want to keep in each group, then
-                combine its purchases and receipt matches in one click.
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  Choose the product name you want to keep in each group,
+                  combine them in one click, or discard false matches.
+                </p>
+                {duplicateGroups.length > 1 && (
+                  <button
+                    type="button"
+                    disabled={
+                      mergingGroupKey !== null ||
+                      dismissingGroupKey !== null ||
+                      isRestoringDismissed
+                    }
+                    onClick={() => void handleDismissAllDuplicateGroups()}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {dismissingGroupKey === "__ALL__" ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    ) : (
+                      <X className="w-3.5 h-3.5 shrink-0" />
+                    )}
+                    Discard all
+                  </button>
+                )}
+              </div>
 
               <div className="space-y-2.5">
                 {duplicateGroups.slice(0, 8).map((group) => {
@@ -631,6 +820,14 @@ export function ProductManagementClient({
                     (p) => p.baseUnit !== survivor.baseUnit
                   );
                   const isGroupMerging = mergingGroupKey === group.groupKey;
+                  const isGroupDismissing =
+                    dismissingGroupKey === group.groupKey ||
+                    dismissingGroupKey === "__ALL__";
+                  const isGroupBusy =
+                    isGroupMerging ||
+                    isGroupDismissing ||
+                    mergingGroupKey !== null ||
+                    dismissingGroupKey !== null;
 
                   return (
                     <div
@@ -686,28 +883,51 @@ export function ProductManagementClient({
                         )}
                       </div>
 
-                      <button
-                        type="button"
-                        disabled={isGroupMerging || mergingGroupKey !== null}
-                        onClick={() =>
-                          void handleMergeDuplicateGroup(
-                            group.groupKey,
-                            group.products as ManagedProduct[],
-                            survivor.id
-                          )
-                        }
-                        className="inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
-                      >
-                        {isGroupMerging ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                        ) : (
-                          <GitMerge className="w-3.5 h-3.5 shrink-0" />
-                        )}
-                        <span>
-                          Merge {group.products.length - 1} into &ldquo;
-                          {survivor.displayName}&rdquo;
-                        </span>
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0 max-w-full">
+                        <button
+                          type="button"
+                          disabled={isGroupBusy}
+                          onClick={() =>
+                            void handleDismissDuplicateGroup(
+                              group.groupKey,
+                              group.products as ManagedProduct[]
+                            )
+                          }
+                          title={`Ignore duplicate suggestion for ${survivor.displayName}`}
+                          aria-label={`Discard duplicate group containing ${survivor.displayName}`}
+                          className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-page)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {isGroupDismissing ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                          ) : (
+                            <X className="w-3.5 h-3.5 shrink-0" />
+                          )}
+                          Discard
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isGroupBusy}
+                          onClick={() =>
+                            void handleMergeDuplicateGroup(
+                              group.groupKey,
+                              group.products as ManagedProduct[],
+                              survivor.id
+                            )
+                          }
+                          className="inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold max-w-full min-w-0 whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {isGroupMerging ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                          ) : (
+                            <GitMerge className="w-3.5 h-3.5 shrink-0" />
+                          )}
+                          <span className="truncate">
+                            Merge {group.products.length - 1} into &ldquo;
+                            {survivor.displayName}&rdquo;
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -770,14 +990,31 @@ export function ProductManagementClient({
           </select>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowHealConfirm((prev) => !prev)}
-          className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
-        >
-          <Wand2 className="w-4 h-4 text-[var(--primary)] shrink-0" />
-          Fix units and staples
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {activeDismissedPairs.length > 0 && (
+            <button
+              type="button"
+              disabled={isRestoringDismissed}
+              onClick={() => void handleRestoreDismissed()}
+              className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-50 cursor-pointer"
+            >
+              {isRestoringDismissed ? (
+                <Loader2 className="w-4 h-4 animate-spin text-[var(--text-muted)] shrink-0" />
+              ) : (
+                <RotateCcw className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+              )}
+              Restore dismissed ({activeDismissedPairs.length})
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowHealConfirm((prev) => !prev)}
+            className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Wand2 className="w-4 h-4 text-[var(--primary)] shrink-0" />
+            Fix units and staples
+          </button>
+        </div>
       </div>
 
       {/* Inline Confirm for Catalogue Clean-up */}
