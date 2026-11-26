@@ -40,6 +40,7 @@ export default async function MyStatsPage() {
                 novaGroup: true,
                 proteinPer100g: true,
                 kcalPer100g: true,
+                nutritionSource: true,
                 nutritionUpdatedAt: true,
               },
             },
@@ -110,15 +111,24 @@ export default async function MyStatsPage() {
   }));
 
   const untaggedFoodIds = new Set<string>();
+  const unmatchedFoodIds = new Set<string>();
   const serializedItems: StatsItem[] = receipts.flatMap((r) =>
     r.items.map((item) => {
       const cat = item.product?.category || item.suggestedCat || "Other";
-      if (
-        item.product &&
-        !NON_FOOD_CATEGORIES.has(cat) &&
-        item.product.nutritionUpdatedAt === null
-      ) {
-        untaggedFoodIds.add(item.product.id);
+      if (item.product && !NON_FOOD_CATEGORIES.has(cat)) {
+        const hasAnyCachedNutrition =
+          item.product.nutriScore !== null ||
+          item.product.novaGroup !== null ||
+          item.product.proteinPer100g !== null ||
+          item.product.kcalPer100g !== null;
+
+        if (!hasAnyCachedNutrition) {
+          if (item.product.nutritionSource === "openfoodfacts_none") {
+            unmatchedFoodIds.add(item.product.id);
+          } else if (item.product.nutritionSource === null) {
+            untaggedFoodIds.add(item.product.id);
+          }
+        }
       }
 
       return {
@@ -176,6 +186,7 @@ export default async function MyStatsPage() {
       shrinkflationIncidents={shrinkflationIncidents}
       initialBudgets={serializedBudgets}
       untaggedFoodProductCount={untaggedFoodIds.size}
+      unmatchedFoodProductCount={unmatchedFoodIds.size}
     />
   );
 }

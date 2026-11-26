@@ -7,8 +7,7 @@ import { revalidatePath } from "next/cache";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { normalizeBarcode } from "@/lib/catalog/parser";
 import {
-  lookupOpenFoodFactsByBarcode,
-  searchOpenFoodFacts,
+  searchOpenFoodFactsForNutrition,
 } from "@/lib/catalog/openfoodfacts";
 
 export async function deleteSightingAction(receiptItemId: string, productSlug: string) {
@@ -225,6 +224,7 @@ export async function fetchAndCacheProductNutritionAction(
         id: true,
         slug: true,
         displayName: true,
+        category: true,
         ean: true,
       },
     });
@@ -235,39 +235,33 @@ export async function fetchAndCacheProductNutritionAction(
 
     const inputTrimmed = barcodeOrQuery?.trim() || "";
     const parsedBarcode = normalizeBarcode(inputTrimmed || product.ean);
+    const isTextOverride = Boolean(inputTrimmed && !normalizeBarcode(inputTrimmed));
 
-    let match = parsedBarcode
-      ? await lookupOpenFoodFactsByBarcode(parsedBarcode)
-      : null;
-
-    if (!match) {
-      const queryTerm =
-        inputTrimmed && !parsedBarcode ? inputTrimmed : product.displayName;
-      const matches = await searchOpenFoodFacts({
-        query: queryTerm,
-        requireQuantity: false,
-      });
-      match =
-        matches.find(
-          (m) =>
-            m.nutrition &&
-            (m.nutrition.nutriScore !== null ||
-              m.nutrition.novaGroup !== null ||
-              m.nutrition.proteinPer100g !== null ||
-              m.nutrition.kcalPer100g !== null)
-        ) ||
-        matches[0] ||
-        null;
-    }
+    const { match, hadNetworkError } = await searchOpenFoodFactsForNutrition({
+      query: isTextOverride ? inputTrimmed : product.displayName,
+      category: product.category,
+      ean: isTextOverride ? null : parsedBarcode,
+    });
 
     const nutrition = match?.nutrition ?? null;
     const resolvedEan = nutrition?.ean || match?.ean || parsedBarcode || product.ean;
 
     if (!nutrition && !resolvedEan) {
+      if (hadNetworkError) {
+        return {
+          success: false,
+          error: "OpenFoodFacts timed out or could not be reached. Please try again.",
+        };
+      }
       await prisma.product.update({
         where: { id: product.id },
-        data: { nutritionUpdatedAt: new Date() },
+        data: {
+          nutritionSource: "openfoodfacts_none",
+          nutritionUpdatedAt: new Date(),
+        },
       });
+      revalidatePath(`/products/${product.slug}`);
+      revalidatePath("/my-stats");
       return {
         success: true,
         found: false,

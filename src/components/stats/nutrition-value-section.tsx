@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useTransition } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -11,6 +11,8 @@ import {
   AlertCircle,
   Check,
   ArrowUpRight,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import {
   computeNutritionBasketInsights,
@@ -29,44 +31,168 @@ import {
 interface NutritionValueSectionProps {
   items: NutritionItemInput[];
   untaggedFoodProductCount: number;
+  unmatchedFoodProductCount?: number;
+}
+
+interface EnrichmentProgress {
+  mode: "missing" | "retry";
+  total: number;
+  checked: number;
+  enriched: number;
+  notFound: number;
+  failed: number;
 }
 
 export function NutritionValueSection({
   items,
   untaggedFoodProductCount,
+  unmatchedFoodProductCount = 0,
 }: NutritionValueSectionProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [progress, setProgress] = useState<EnrichmentProgress | null>(null);
+  const cancelRef = useRef(false);
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      cancelRef.current = true;
+    };
+  }, []);
 
   const insights = useMemo(
     () => computeNutritionBasketInsights(items),
     [items]
   );
 
-  const handleEnrichBatch = () => {
+  const handleRunEnrichment = async (mode: "missing" | "retry") => {
+    if (isEnriching) return;
+
+    const initialTotal =
+      mode === "retry"
+        ? untaggedFoodProductCount + unmatchedFoodProductCount
+        : untaggedFoodProductCount;
+    if (initialTotal <= 0) return;
+
+    cancelRef.current = false;
+    setIsEnriching(true);
     setFeedback(null);
-    startTransition(async () => {
-      const res = await enrichMissingNutritionBatchAction(8);
-      if (res.success) {
+    setProgress({
+      mode,
+      total: initialTotal,
+      checked: 0,
+      enriched: 0,
+      notFound: 0,
+      failed: 0,
+    });
+
+    const triedIds: string[] = [];
+    let checked = 0;
+    let enriched = 0;
+    let notFound = 0;
+    let failed = 0;
+    let remaining = initialTotal;
+    let batchIdx = 0;
+
+    try {
+      while (!cancelRef.current) {
+        const res = await enrichMissingNutritionBatchAction({
+          limit: 8,
+          excludeProductIds: triedIds,
+          includePreviouslyMissed: mode === "retry",
+        });
+
+        if (!res.success) {
+          setFeedback({
+            type: "error",
+            message:
+              checked > 0
+                ? `Stopped after checking ${checked} groceries (${enriched} updated): ${
+                    res.error || "OpenFoodFacts request failed."
+                  }`
+                : res.error || "Could not fetch nutrition details.",
+          });
+          if (enriched > 0 || checked > 0) {
+            router.refresh();
+          }
+          return;
+        }
+
+        if (Array.isArray(res.processedIds)) {
+          for (const id of res.processedIds) {
+            if (!triedIds.includes(id)) triedIds.push(id);
+          }
+        }
+
+        const batchProcessed = res.processedCount ?? 0;
+        const batchEnriched = res.enrichedCount ?? 0;
+        checked += batchProcessed;
+        enriched += batchEnriched;
+        notFound += res.notFoundCount ?? 0;
+        failed += res.failedCount ?? 0;
+        remaining = res.remainingCount ?? 0;
+
+        setProgress((prev) => ({
+          mode,
+          total: Math.max(prev?.total ?? initialTotal, checked + remaining),
+          checked,
+          enriched,
+          notFound,
+          failed,
+        }));
+
+        batchIdx++;
+        if (batchEnriched > 0 && batchIdx % 2 === 0 && remaining > 0) {
+          router.refresh();
+        }
+
+        if (remaining <= 0 || batchProcessed === 0) {
+          break;
+        }
+      }
+
+      if (cancelRef.current) {
         setFeedback({
           type: "success",
-          message: `Checked ${res.processedCount} products via OpenFoodFacts (${res.enrichedCount} updated${
-            res.remainingCount ? `, ${res.remainingCount} remaining` : ""
+          message: `Paused after checking ${checked} groceries (${enriched} updated${
+            remaining > 0 ? `, ${remaining} remaining` : ""
           }).`,
         });
-        router.refresh();
       } else {
+        const details: string[] = [`${enriched} updated`];
+        if (notFound > 0) details.push(`${notFound} no OpenFoodFacts match`);
+        if (failed > 0) details.push(`${failed} timed out (retryable)`);
         setFeedback({
-          type: "error",
-          message: res.error || "Could not fetch nutrition details.",
+          type: "success",
+          message: `Checked ${checked} groceries via OpenFoodFacts (${details.join(", ")}).`,
         });
       }
-    });
+
+      router.refresh();
+    } catch {
+      setFeedback({
+        type: "error",
+        message:
+          checked > 0
+            ? `Stopped after checking ${checked} groceries (${enriched} updated) due to a network error.`
+            : "Could not reach OpenFoodFacts right now.",
+      });
+      if (checked > 0) {
+        router.refresh();
+      }
+    } finally {
+      setIsEnriching(false);
+      setProgress(null);
+    }
   };
+
+  const progressPct =
+    progress && progress.total > 0
+      ? Math.min(100, Math.round((progress.checked / progress.total) * 100))
+      : 0;
 
   const hasAnyNutritionData =
     insights.taggedNovaItemCount > 0 ||
@@ -94,27 +220,68 @@ export function NutritionValueSection({
             food items tagged
           </span>
 
-          {untaggedFoodProductCount > 0 && (
+          {isEnriching ? (
+            <>
+              <span className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-[var(--primary-tint)] text-[var(--primary)] border border-[var(--primary)]/30 text-[13px] font-semibold whitespace-nowrap shrink-0 tabular-nums">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span>
+                  Fetching ({progress?.checked ?? 0}/{progress?.total ?? 0})…
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  cancelRef.current = true;
+                }}
+                className="inline-flex items-center gap-1 h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-page)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5 shrink-0" />
+                <span>Stop</span>
+              </button>
+            </>
+          ) : untaggedFoodProductCount > 0 ? (
             <button
               type="button"
-              onClick={handleEnrichBatch}
-              disabled={isPending}
-              className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-[var(--primary-tint)] hover:border-[var(--primary)]/50 text-[var(--primary)] border border-[var(--primary)]/30 text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
+              onClick={() => void handleRunEnrichment("missing")}
+              className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-[var(--primary-tint)] hover:border-[var(--primary)]/50 text-[var(--primary)] border border-[var(--primary)]/30 text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer tabular-nums"
             >
-              {isPending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              ) : (
-                <Sparkles className="w-3.5 h-3.5 shrink-0" />
-              )}
-              <span>
-                {isPending
-                  ? "Fetching nutrition..."
-                  : `Fetch missing (${Math.min(untaggedFoodProductCount, 8)})`}
-              </span>
+              <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              <span>Fetch all missing ({untaggedFoodProductCount})</span>
             </button>
-          )}
+          ) : unmatchedFoodProductCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => void handleRunEnrichment("retry")}
+              className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-page)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 transition-colors cursor-pointer tabular-nums"
+            >
+              <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+              <span>Retry unmatched ({unmatchedFoodProductCount})</span>
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {isEnriching && progress && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-page)]/70 p-3.5 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] tabular-nums">
+            <span className="text-[var(--text-primary)] font-medium">
+              Checking OpenFoodFacts… {progress.checked} / {progress.total} ·{" "}
+              {progress.enriched} matched
+              {progress.notFound > 0
+                ? ` · ${progress.notFound} not found`
+                : ""}
+              {progress.failed > 0 ? ` · ${progress.failed} timed out` : ""}
+            </span>
+            <span className="text-[var(--text-muted)]">{progressPct}%</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-[var(--bg-subtle)] overflow-hidden">
+            <div
+              className="h-full rounded-full bg-[var(--primary)] transition-[width] duration-300"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {feedback && (
         <div
@@ -140,19 +307,27 @@ export function NutritionValueSection({
             Nutri-Score, NOVA group, and protein details from OpenFoodFacts to
             see protein-per-€ rankings and processing share.
           </p>
-          {untaggedFoodProductCount > 0 && (
+          {(untaggedFoodProductCount > 0 || unmatchedFoodProductCount > 0) && (
             <button
               type="button"
-              onClick={handleEnrichBatch}
-              disabled={isPending}
+              onClick={() =>
+                void handleRunEnrichment(
+                  untaggedFoodProductCount > 0 ? "missing" : "retry"
+                )
+              }
+              disabled={isEnriching}
               className="inline-flex items-center gap-1.5 h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {isPending ? (
+              {isEnriching ? (
                 <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               ) : (
                 <Sparkles className="w-4 h-4 shrink-0" />
               )}
-              <span>Fetch nutrition for top groceries</span>
+              <span>
+                {untaggedFoodProductCount > 0
+                  ? `Fetch nutrition for all ${untaggedFoodProductCount} groceries`
+                  : `Retry ${unmatchedFoodProductCount} unmatched groceries`}
+              </span>
             </button>
           )}
         </div>

@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildNutritionSearchQueries,
   extractOpenFoodFactsNutrition,
   normalizeBarcode,
+  pickBestNutritionMatch,
+  type CatalogLookupResult,
 } from "../src/lib/catalog/parser";
 import {
   computeKcalPerEuro,
@@ -132,4 +135,83 @@ test("computeNutritionBasketInsights calculates NOVA 4 share excluding non-food 
   assert.equal(insights.proteinPerEuroRankings[0].proteinPerEuro, 34.0);
   assert.equal(insights.proteinPerEuroRankings[1].productSlug, "galletas-tostadas");
   assert.equal(insights.proteinPerEuroRankings[1].proteinPerEuro, 17.0);
+});
+
+function makeOffCandidate(
+  productName: string,
+  opts: {
+    nutriScore?: "a" | "b" | "c" | "d" | "e" | null;
+    novaGroup?: 1 | 2 | 3 | 4 | null;
+    proteinPer100g?: number | null;
+    kcalPer100g?: number | null;
+  } = {}
+): CatalogLookupResult {
+  return {
+    productName,
+    brand: "",
+    rawQuantityText: "500 g",
+    baseUnit: "KG",
+    unitMeasurePerPack: 0.5,
+    nutrition: {
+      nutriScore: opts.nutriScore ?? "a",
+      novaGroup: opts.novaGroup ?? 1,
+      proteinPer100g: opts.proteinPer100g ?? 1,
+      kcalPer100g: opts.kcalPer100g ?? 40,
+      ean: "8480000105302",
+    },
+  };
+}
+
+test("buildNutritionSearchQueries prioritizes clean grocery names and limits store-brand hints to packaged categories", () => {
+  const freshQueries = buildNutritionSearchQueries(
+    "Tomate Cherry Pera 500g",
+    "Fruits & Vegetables",
+    "mercadona"
+  );
+  assert.equal(freshQueries[0], "Tomate Cherry Pera");
+  assert.ok(!freshQueries.some((q) => /hacendado/i.test(q)));
+  assert.ok(freshQueries.length <= 3);
+
+  const packagedQueries = buildNutritionSearchQueries(
+    "Galletas Tostadas 4x200g",
+    "Bakery",
+    "mercadona"
+  );
+  assert.equal(packagedQueries[0], "Galletas Tostadas");
+  assert.ok(packagedQueries.some((q) => /Hacendado/i.test(q)));
+});
+
+test("pickBestNutritionMatch blocks processed snack matches for fresh produce, meat, and fish while matching pantry staples", () => {
+  // Fresh produce should reject fried/crispy/processed snacks & jams/drinks
+  const onionMatch = pickBestNutritionMatch("Cebolla", "Fruits & Vegetables", [
+    makeOffCandidate("Cebolla frita crujiente", { nutriScore: "d", novaGroup: 4, proteinPer100g: 6 }),
+    makeOffCandidate("Cebolla en conserva", { nutriScore: "c", novaGroup: 3, proteinPer100g: 1 }),
+    makeOffCandidate("Cebollas frescas", { nutriScore: "a", novaGroup: 1, proteinPer100g: 1.1 }),
+  ]);
+  assert.equal(onionMatch?.productName, "Cebollas frescas");
+
+  // Mandarina should never accept Mandarina soft drinks or jams when no fresh match exists
+  const tangerineOnlyProcessed = pickBestNutritionMatch("Mandarina", "Fruits & Vegetables", [
+    makeOffCandidate("Refresco de mandarina", { nutriScore: "e", novaGroup: 4, proteinPer100g: 0 }),
+    makeOffCandidate("Mermelada extra de mandarina", { nutriScore: "d", novaGroup: 4, proteinPer100g: 0.4 }),
+  ]);
+  assert.equal(tangerineOnlyProcessed, null);
+
+  // Fresh meat rejects breaded nuggets
+  const chickenMatch = pickBestNutritionMatch("Pechuga de Pollo Entera", "Meat & Poultry", [
+    makeOffCandidate("Nuggets de pechuga de pollo", { nutriScore: "c", novaGroup: 4, proteinPer100g: 14 }),
+    makeOffCandidate("Pechuga de pollo entera fresca", { nutriScore: "a", novaGroup: 1, proteinPer100g: 23 }),
+  ]);
+  assert.equal(chickenMatch?.productName, "Pechuga de pollo entera fresca");
+
+  // Packaged categories (Pantry / Bakery) allow NOVA 3/4 and modifiers like caldo/galletas
+  const brothMatch = pickBestNutritionMatch("Caldo de Carne con Sofrito", "Pantry", [
+    makeOffCandidate("Caldo de carne con sofrito", { nutriScore: "c", novaGroup: 3, proteinPer100g: 1.2 }),
+  ]);
+  assert.equal(brothMatch?.productName, "Caldo de carne con sofrito");
+
+  const cookieMatch = pickBestNutritionMatch("Galletas Tostadas", "Bakery", [
+    makeOffCandidate("Galletas tostadas tradicionales", { nutriScore: "d", novaGroup: 4, proteinPer100g: 6.8 }),
+  ]);
+  assert.equal(cookieMatch?.productName, "Galletas tostadas tradicionales");
 });
