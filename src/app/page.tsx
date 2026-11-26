@@ -11,86 +11,99 @@ import { EmptyStateDemoCard } from "@/components/demo/empty-state-demo-card";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  // Query 100% real PostgreSQL data for all products, stores & confirmed receipts
-  const [dbProducts, dbReceipts, dbStores, totalReceiptsCount] = await Promise.all([
-    prisma.product.findMany({
-      where: {
-        receiptItems: {
-          some: {
-            confirmed: true,
-            excluded: false,
-            receipt: {
-              status: "CONFIRMED",
-            },
-          },
-        },
-      },
-      include: {
-        receiptItems: {
-          where: {
-            confirmed: true,
-            excluded: false,
-            receipt: {
-              status: "CONFIRMED",
-            },
-          },
-          include: {
-            receipt: {
-              include: {
-                store: true,
+  const [dbProducts, dbReceipts, dbStores, totalReceiptsCount] =
+    await Promise.all([
+      prisma.product.findMany({
+        where: {
+          receiptItems: {
+            some: {
+              confirmed: true,
+              excluded: false,
+              receipt: {
+                status: "CONFIRMED",
               },
             },
           },
-          orderBy: {
-            receipt: {
-              purchaseDate: "asc",
+        },
+        include: {
+          receiptItems: {
+            where: {
+              confirmed: true,
+              excluded: false,
+              receipt: {
+                status: "CONFIRMED",
+              },
+            },
+            include: {
+              receipt: {
+                include: {
+                  store: true,
+                },
+              },
+            },
+            orderBy: {
+              receipt: {
+                purchaseDate: "asc",
+              },
             },
           },
         },
-      },
-      orderBy: [
-        { isStaple: "desc" },
-        { displayName: "asc" },
-      ],
-    }),
-    prisma.receipt.findMany({
-      where: { status: "CONFIRMED" },
-      include: {
-        store: true,
-        _count: {
-          select: { items: true },
-        },
-      },
-      orderBy: {
-        purchaseDate: "desc",
-      },
-      take: 6,
-    }),
-    prisma.store.findMany({
-      where: {
-        receipts: {
-          some: { status: "CONFIRMED" },
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        brandHex: true,
-        _count: {
-          select: {
-            receipts: { where: { status: "CONFIRMED" } },
+        orderBy: [{ isStaple: "desc" }, { displayName: "asc" }],
+      }),
+      prisma.receipt.findMany({
+        where: { status: "CONFIRMED" },
+        include: {
+          store: true,
+          items: {
+            where: {
+              confirmed: true,
+              excluded: false,
+              isDiscount: false,
+            },
+            include: {
+              product: {
+                select: {
+                  slug: true,
+                  displayName: true,
+                },
+              },
+            },
+            orderBy: { totalPrice: "desc" },
+          },
+          _count: {
+            select: { items: true },
           },
         },
-      },
-      orderBy: { name: "asc" },
-    }),
-    prisma.receipt.count({ where: { status: "CONFIRMED" } }),
-  ]);
+        orderBy: {
+          purchaseDate: "desc",
+        },
+        take: 6,
+      }),
+      prisma.store.findMany({
+        where: {
+          receipts: {
+            some: { status: "CONFIRMED" },
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          brandHex: true,
+          _count: {
+            select: {
+              receipts: { where: { status: "CONFIRMED" } },
+            },
+          },
+        },
+        orderBy: { name: "asc" },
+      }),
+      prisma.receipt.count({ where: { status: "CONFIRMED" } }),
+    ]);
 
   if (totalReceiptsCount === 0) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
+      <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-16 sm:py-24">
         <EmptyStateDemoCard />
       </div>
     );
@@ -107,31 +120,57 @@ export default async function HomePage() {
       purchaseDate: item.receipt.purchaseDate.toISOString(),
       storeName: item.receipt.store.name,
       storeSlug: item.receipt.store.slug,
-      storeBrandHex: item.receipt.store.brandHex || "#10b981",
+      storeBrandHex: item.receipt.store.brandHex || "#15803D",
       unitPrice: Number(item.unitPrice),
       pricePerBaseUnit: Number(item.pricePerBaseUnit),
+      unitMeasure: Number(item.unitMeasure),
+      quantity: Number(item.quantity),
+      rawName: item.rawName,
     })),
   }));
 
   const recentReceipts: RecentReceiptItem[] = dbReceipts.map((r) => ({
     id: r.id,
     storeName: r.store.name,
-    storeBrandHex: r.store.brandHex || "#10b981",
+    storeBrandHex: r.store.brandHex || "#15803D",
     purchaseDate: r.purchaseDate.toISOString(),
     itemsCount: r._count.items,
     totalAmount: r.totalAmount ? Number(r.totalAmount) : 0,
+    taxBreakdown: Array.isArray(r.taxBreakdown)
+      ? (
+          r.taxBreakdown as Array<{
+            rate: number;
+            baseAmount: number;
+            taxAmount: number;
+          }>
+        ).map((t) => ({
+          rate: Number(t.rate) || 0,
+          baseAmount: Number(t.baseAmount) || 0,
+          taxAmount: Number(t.taxAmount) || 0,
+        }))
+      : null,
+    items: r.items.map((it) => ({
+      id: it.id,
+      name: it.product?.displayName || it.suggestedName || it.rawName,
+      productSlug: it.product?.slug || null,
+      rawName: it.rawName,
+      totalPrice: Number(it.totalPrice),
+      unitMeasure: Number(it.unitMeasure),
+      baseUnit: it.baseUnit as "KG" | "L" | "UNIT",
+      quantity: Number(it.quantity),
+    })),
   }));
 
   const stores: HomeStoreData[] = dbStores.map((s) => ({
     id: s.id,
     name: s.name,
     slug: s.slug,
-    brandHex: s.brandHex || "#10b981",
+    brandHex: s.brandHex || "#15803D",
     receiptsCount: s._count.receipts,
   }));
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+    <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-7 sm:py-10">
       <HomePriceIntelligence
         products={products}
         recentReceipts={recentReceipts}

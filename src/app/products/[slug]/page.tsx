@@ -17,52 +17,72 @@ export default async function ProductDetailPage({
 }) {
   const { slug } = await params;
 
-  const product = await prisma.product.findUnique({
-    where: { slug },
-    include: {
-      receiptItems: {
-        where: {
-          confirmed: true,
-          excluded: false,
-          receipt: {
-            status: "CONFIRMED",
+  const [product, allProducts] = await Promise.all([
+    prisma.product.findUnique({
+      where: { slug },
+      include: {
+        receiptItems: {
+          where: {
+            confirmed: true,
+            excluded: false,
+            receipt: {
+              status: "CONFIRMED",
+            },
           },
-        },
-        include: {
-          receipt: {
-            include: {
-              store: true,
+          include: {
+            receipt: {
+              include: {
+                store: true,
+              },
+            },
+          },
+          orderBy: {
+            receipt: {
+              purchaseDate: "asc",
             },
           },
         },
-        orderBy: {
-          receipt: {
-            purchaseDate: "asc",
+        aliases: {
+          include: {
+            store: true,
           },
         },
       },
-      aliases: {
-        include: {
-          store: true,
+    }),
+    prisma.product.findMany({
+      where: {
+        receiptItems: {
+          some: {
+            confirmed: true,
+            excluded: false,
+            receipt: {
+              status: "CONFIRMED",
+            },
+          },
         },
       },
-    },
-  });
+      select: {
+        slug: true,
+        displayName: true,
+      },
+      orderBy: { displayName: "asc" },
+    }),
+  ]);
 
   if (!product) {
     notFound();
   }
 
-  // Serialize observations
   const sightings: SightingObservation[] = product.receiptItems.map((item) => ({
     id: item.id,
     receiptId: item.receiptId,
     purchaseDate: item.receipt.purchaseDate.toISOString(),
     storeName: item.receipt.store.name,
     storeSlug: item.receipt.store.slug,
-    storeBrandHex: item.receipt.store.brandHex || "#10b981",
+    storeBrandHex: item.receipt.store.brandHex || "#15803D",
     rawName: item.rawName,
     unitPrice: Number(item.unitPrice),
+    totalPrice: Number(item.totalPrice),
     pricePerBaseUnit: Number(item.pricePerBaseUnit),
     baseUnit: product.baseUnit as "KG" | "L" | "UNIT",
     unitMeasure: Number(item.unitMeasure),
@@ -73,9 +93,10 @@ export default async function ProductDetailPage({
     id: a.id,
     storeId: a.storeId,
     storeName: a.store.name,
-    storeBrandHex: a.store.brandHex || "#10b981",
+    storeBrandHex: a.store.brandHex || "#15803D",
     rawAlias: a.rawAlias,
-    unitMeasurePerPack: a.unitMeasurePerPack !== null ? Number(a.unitMeasurePerPack) : null,
+    unitMeasurePerPack:
+      a.unitMeasurePerPack !== null ? Number(a.unitMeasurePerPack) : null,
     isVariableWeight: !!a.isVariableWeight,
   }));
 
@@ -83,10 +104,12 @@ export default async function ProductDetailPage({
   const canDelete = !!session?.user;
   const isAdmin = session?.user?.role === "ADMIN";
 
-  const shrinkflationIncidents = await getShrinkflationIncidents({ productSlug: slug });
+  const shrinkflationIncidents = await getShrinkflationIncidents({
+    productSlug: slug,
+  });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-7 sm:py-10">
       <ProductTrackerClient
         product={{
           id: product.id,
@@ -98,7 +121,9 @@ export default async function ProductDetailPage({
           nutriScore: product.nutriScore ?? null,
           novaGroup: product.novaGroup ?? null,
           proteinPer100g:
-            product.proteinPer100g !== null ? Number(product.proteinPer100g) : null,
+            product.proteinPer100g !== null
+              ? Number(product.proteinPer100g)
+              : null,
           kcalPer100g:
             product.kcalPer100g !== null ? Number(product.kcalPer100g) : null,
           ean: product.ean ?? null,
@@ -107,6 +132,7 @@ export default async function ProductDetailPage({
             ? product.nutritionUpdatedAt.toISOString()
             : null,
         }}
+        allProducts={allProducts}
         sightings={sightings}
         aliases={aliases}
         shrinkflationIncidents={shrinkflationIncidents}

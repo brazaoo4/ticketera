@@ -39,10 +39,7 @@ export default async function ComparePage() {
           },
         },
       },
-      orderBy: [
-        { isStaple: "desc" },
-        { displayName: "asc" },
-      ],
+      orderBy: [{ isStaple: "desc" }, { displayName: "asc" }],
     }),
     prisma.store.findMany({
       orderBy: { name: "asc" },
@@ -52,16 +49,19 @@ export default async function ComparePage() {
   const stores: ComparisonStore[] = dbStores.map((s) => ({
     key: s.slug,
     name: s.name,
-    brandHex: s.brandHex || "#10b981",
+    brandHex: s.brandHex || "#15803D",
   }));
 
   const items: BasketItem[] = dbProducts.map((p) => {
-    const details: Record<string, {
-      unitPrice: number;
-      pricePerBaseUnit: number;
-      unitMeasure: number;
-      quantity: number;
-    }> = {};
+    const details: Record<
+      string,
+      {
+        unitPrice: number;
+        pricePerBaseUnit: number;
+        unitMeasure: number;
+        quantity: number;
+      }
+    > = {};
 
     p.receiptItems.forEach((item) => {
       const storeSlug = item.receipt.store.slug;
@@ -76,7 +76,7 @@ export default async function ComparePage() {
     });
 
     const unit =
-      p.baseUnit === "KG" ? "1 kg" : p.baseUnit === "L" ? "1 L" : "Pack";
+      p.baseUnit === "KG" ? "1 kg" : p.baseUnit === "L" ? "1 L" : "1 unit";
 
     return {
       id: p.id,
@@ -84,6 +84,7 @@ export default async function ComparePage() {
       name: p.displayName,
       category: p.category,
       baseUnit: p.baseUnit as "KG" | "L" | "UNIT",
+      isStaple: p.isStaple,
       unit,
       details,
     };

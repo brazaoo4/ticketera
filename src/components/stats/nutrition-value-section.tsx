@@ -19,6 +19,12 @@ import {
   type NutritionItemInput,
 } from "@/lib/analytics/nutrition";
 import { enrichMissingNutritionBatchAction } from "@/app/my-stats/actions";
+import {
+  formatCurrency,
+  formatPercent,
+  getStoreBrand,
+  normalizeUnit,
+} from "@/lib/format";
 
 interface NutritionValueSectionProps {
   items: NutritionItemInput[];
@@ -48,7 +54,7 @@ export function NutritionValueSection({
       if (res.success) {
         setFeedback({
           type: "success",
-          message: `Analyzed ${res.processedCount} products via OpenFoodFacts (${res.enrichedCount} enriched${
+          message: `Checked ${res.processedCount} products via OpenFoodFacts (${res.enrichedCount} updated${
             res.remainingCount ? `, ${res.remainingCount} remaining` : ""
           }).`,
         });
@@ -56,7 +62,7 @@ export function NutritionValueSection({
       } else {
         setFeedback({
           type: "error",
-          message: res.error || "Failed to fetch nutrition metadata.",
+          message: res.error || "Could not fetch nutrition details.",
         });
       }
     });
@@ -68,22 +74,24 @@ export function NutritionValueSection({
     insights.proteinPerEuroRankings.length > 0;
 
   return (
-    <section className="rounded-3xl border border-zinc-800/80 bg-zinc-900/40 p-6 sm:p-8 space-y-6">
+    <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 sm:p-6 space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
         <div className="space-y-1">
-          <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-            <Leaf className="w-5 h-5 text-emerald-400 shrink-0" />
-            <span>Nutrition & Protein Value Insights</span>
+          <h2 className="font-display text-[20px] font-semibold text-[var(--text-primary)] flex items-center gap-2">
+            <Leaf className="w-5 h-5 text-[var(--primary)] shrink-0" />
+            <span>Nutrition &amp; protein value</span>
           </h2>
-          <p className="text-xs text-zinc-400">
-            Cached OpenFoodFacts Nutri-Score, NOVA processing share, and protein-per-euro efficiency.
+          <p className="text-[13px] text-[var(--text-muted)]">
+            Nutri-Score grades, food processing breakdown, and protein per euro
+            across your grocery purchases.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-          <span className="px-2.5 py-1 rounded-lg bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400 whitespace-nowrap shrink-0 tabular-nums">
-            {insights.taggedProductCount} / {insights.totalFoodProductCount} food products tagged
+          <span className="h-8 px-3 rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] text-[13px] text-[var(--text-muted)] inline-flex items-center whitespace-nowrap shrink-0 tabular-nums">
+            {insights.taggedProductCount} / {insights.totalFoodProductCount}{" "}
+            food items tagged
           </span>
 
           {untaggedFoodProductCount > 0 && (
@@ -91,17 +99,17 @@ export function NutritionValueSection({
               type="button"
               onClick={handleEnrichBatch}
               disabled={isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full bg-[var(--primary-tint)] hover:border-[var(--primary)]/50 text-[var(--primary)] border border-[var(--primary)]/30 text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
             >
               {isPending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
               ) : (
-                <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
               )}
               <span>
                 {isPending
-                  ? "Fetching OpenFoodFacts..."
-                  : `Fetch Missing (${Math.min(untaggedFoodProductCount, 8)})`}
+                  ? "Fetching nutrition..."
+                  : `Fetch missing (${Math.min(untaggedFoodProductCount, 8)})`}
               </span>
             </button>
           )}
@@ -110,10 +118,10 @@ export function NutritionValueSection({
 
       {feedback && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+          className={`p-3.5 rounded-xl border text-[13px] flex items-center gap-2 ${
             feedback.type === "success"
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-              : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+              ? "bg-[var(--positive-tint)] border-[var(--positive)]/30 text-[var(--positive)]"
+              : "bg-[var(--negative-tint)] border-[var(--negative)]/30 text-[var(--negative)]"
           }`}
         >
           {feedback.type === "success" ? (
@@ -126,23 +134,25 @@ export function NutritionValueSection({
       )}
 
       {!hasAnyNutritionData ? (
-        <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-950/50 p-6 text-center space-y-3">
-          <p className="text-xs text-zinc-400 max-w-lg mx-auto">
-            No cached nutritional metadata yet for your food purchases. Fetch lightweight Nutri-Score, NOVA group, and protein data from OpenFoodFacts to unlock protein-per-€ rankings and NOVA 4 share.
+        <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg-page)]/60 p-6 text-center space-y-3">
+          <p className="text-[13px] text-[var(--text-muted)] max-w-lg mx-auto">
+            No nutritional metadata cached yet for your food purchases. Fetch
+            Nutri-Score, NOVA group, and protein details from OpenFoodFacts to
+            see protein-per-€ rankings and processing share.
           </p>
           {untaggedFoodProductCount > 0 && (
             <button
               type="button"
               onClick={handleEnrichBatch}
               disabled={isPending}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer"
             >
               {isPending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
               ) : (
-                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                <Sparkles className="w-4 h-4 shrink-0" />
               )}
-              <span>Fetch Nutrition for Top Products</span>
+              <span>Fetch nutrition for top groceries</span>
             </button>
           )}
         </div>
@@ -151,44 +161,47 @@ export function NutritionValueSection({
           {/* 3-Card Summary Strip */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Card 1: Ultra-Processed (NOVA 4) Basket Share */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-                <span>Ultra-Processed (NOVA 4)</span>
-                <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 whitespace-nowrap shrink-0">
-                  By Spend
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-page)]/50 p-4 space-y-3">
+              <div className="flex items-center justify-between text-[13px] text-[var(--text-muted)]">
+                <span className="font-medium">Ultra-processed (NOVA 4)</span>
+                <span className="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[var(--text-primary)] whitespace-nowrap shrink-0">
+                  By spend
                 </span>
               </div>
 
               {insights.taggedNovaItemCount > 0 ? (
                 <>
-                  <div className="flex items-baseline gap-2 font-mono tabular-nums">
+                  <div className="flex items-baseline gap-2 tabular-nums">
                     <span
-                      className={`text-2xl sm:text-3xl font-extrabold ${
+                      className={`font-display text-2xl sm:text-3xl font-bold ${
                         insights.nova4SharePercent >= 35
-                          ? "text-rose-400"
+                          ? "text-[var(--negative)]"
                           : insights.nova4SharePercent >= 20
-                          ? "text-amber-300"
-                          : "text-emerald-400"
+                          ? "text-[var(--accent)]"
+                          : "text-[var(--positive)]"
                       }`}
                     >
-                      {insights.nova4SharePercent.toFixed(1)}%
+                      {formatPercent(insights.nova4SharePercent, {
+                        showPlus: false,
+                      })}
                     </span>
-                    <span className="text-xs text-zinc-400">
-                      (€{insights.nova4Spend.toFixed(2)})
+                    <span className="text-[13px] text-[var(--text-muted)]">
+                      ({formatCurrency(insights.nova4Spend)})
                     </span>
                   </div>
 
                   {/* NOVA 1-4 stacked bar */}
-                  <div className="h-2.5 w-full rounded-full bg-zinc-900 overflow-hidden flex">
+                  <div className="h-2.5 w-full rounded-full bg-[var(--bg-subtle)] overflow-hidden flex">
                     {insights.novaBreakdown.map((nb) => {
                       const meta = getNovaGroupMeta(nb.group);
                       if (!meta || nb.shareOfTaggedPercent <= 0) return null;
                       return (
                         <div
                           key={nb.group}
-                          title={`${meta.label}: ${nb.shareOfTaggedPercent}% (€${nb.spend.toFixed(
-                            2
-                          )})`}
+                          title={`${meta.label}: ${formatPercent(
+                            nb.shareOfTaggedPercent,
+                            { showPlus: false }
+                          )} (${formatCurrency(nb.spend)})`}
                           style={{
                             width: `${nb.shareOfTaggedPercent}%`,
                             backgroundColor: meta.barColor,
@@ -199,38 +212,43 @@ export function NutritionValueSection({
                     })}
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                  <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
                     {insights.novaBreakdown.map((nb) => {
                       const meta = getNovaGroupMeta(nb.group)!;
                       return (
                         <span
                           key={nb.group}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 whitespace-nowrap shrink-0 tabular-nums"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-primary)] whitespace-nowrap shrink-0 tabular-nums"
                         >
                           <span
-                            className="w-1.5 h-1.5 rounded-full shrink-0"
+                            className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: meta.barColor }}
                           />
                           <span>N{nb.group}:</span>
-                          <strong>{nb.shareOfTaggedPercent.toFixed(0)}%</strong>
+                          <strong>
+                            {formatPercent(nb.shareOfTaggedPercent, {
+                              decimals: 0,
+                              showPlus: false,
+                            })}
+                          </strong>
                         </span>
                       );
                     })}
                   </div>
                 </>
               ) : (
-                <p className="text-xs text-zinc-500 font-mono">
-                  No NOVA-tagged food items in selected timeframe.
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  No NOVA-tagged food items in this period.
                 </p>
               )}
             </div>
 
             {/* Card 2: Nutri-Score Basket Distribution */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-                <span>Nutri-Score Profile</span>
-                <span className="px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 whitespace-nowrap shrink-0 tabular-nums">
-                  €{insights.taggedNutriScoreSpend.toFixed(2)}
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-page)]/50 p-4 space-y-3">
+              <div className="flex items-center justify-between text-[13px] text-[var(--text-muted)]">
+                <span className="font-medium">Nutri-Score share</span>
+                <span className="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[var(--text-primary)] whitespace-nowrap shrink-0 tabular-nums">
+                  {formatCurrency(insights.taggedNutriScoreSpend)}
                 </span>
               </div>
 
@@ -241,66 +259,76 @@ export function NutritionValueSection({
                     return (
                       <div
                         key={ns.grade}
-                        className="flex items-center gap-2 text-xs font-mono tabular-nums"
+                        className="flex items-center gap-2 text-[13px] tabular-nums"
                       >
                         <span
-                          className={`w-6 text-center py-0.5 rounded border text-[10px] font-bold whitespace-nowrap shrink-0 ${style.className}`}
+                          className={`w-6 text-center py-0.5 rounded-md border font-semibold whitespace-nowrap shrink-0 leading-none ${style.className}`}
                         >
                           {style.letter}
                         </span>
-                        <div className="flex-1 h-2 rounded-full bg-zinc-900 overflow-hidden">
+                        <div className="flex-1 h-2 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
                           <div
-                            className="h-full rounded-full bg-emerald-500/80"
+                            className="h-full rounded-full bg-[var(--primary)]"
                             style={{ width: `${ns.shareOfTaggedPercent}%` }}
                           />
                         </div>
-                        <span className="w-12 text-right text-zinc-300">
-                          {ns.shareOfTaggedPercent.toFixed(0)}%
+                        <span className="w-12 text-right text-[var(--text-muted)]">
+                          {formatPercent(ns.shareOfTaggedPercent, {
+                            decimals: 0,
+                            showPlus: false,
+                          })}
                         </span>
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <p className="text-xs text-zinc-500 font-mono">
-                  No Nutri-Score data cached in selected timeframe.
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  No Nutri-Score data cached in this period.
                 </p>
               )}
             </div>
 
             {/* Card 3: Best Protein Efficiency Highlight */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400 uppercase tracking-wider">
-                <span>Top Protein Value</span>
-                <Award className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-page)]/50 p-4 space-y-3">
+              <div className="flex items-center justify-between text-[13px] text-[var(--text-muted)]">
+                <span className="font-medium">Best protein value</span>
+                <Award className="w-4 h-4 text-[var(--primary)] shrink-0" />
               </div>
 
               {insights.proteinPerEuroRankings.length > 0 ? (
                 <>
                   <div>
-                    <div className="text-2xl sm:text-3xl font-extrabold font-mono text-emerald-400 tabular-nums">
-                      {insights.proteinPerEuroRankings[0].proteinPerEuro.toFixed(1)}{" "}
-                      <span className="text-sm font-semibold text-zinc-300">
+                    <div className="font-display text-2xl sm:text-3xl font-bold text-[var(--primary)] tabular-nums">
+                      {insights.proteinPerEuroRankings[0].proteinPerEuro
+                        .toFixed(1)
+                        .replace(".", ",")}{" "}
+                      <span className="text-[14px] font-sans font-semibold text-[var(--text-muted)]">
                         g / €
                       </span>
                     </div>
-                    <div className="text-xs font-bold text-white truncate mt-1">
+                    <div className="text-[15px] font-semibold text-[var(--text-primary)] truncate mt-1">
                       {insights.proteinPerEuroRankings[0].productName}
                     </div>
                   </div>
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 text-[11px] font-mono text-zinc-400 flex items-center justify-between gap-2 tabular-nums">
+                  <div className="px-3 py-2 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] text-[13px] text-[var(--text-muted)] flex items-center justify-between gap-2 tabular-nums">
                     <span className="truncate">
-                      {insights.proteinPerEuroRankings[0].proteinPer100g}g / 100g
+                      {insights.proteinPerEuroRankings[0].proteinPer100g
+                        .toFixed(1)
+                        .replace(".", ",")}
+                      g / 100g
                     </span>
-                    <span className="text-zinc-200 font-semibold whitespace-nowrap shrink-0">
-                      €{insights.proteinPerEuroRankings[0].pricePerBaseUnit.toFixed(2)}/
-                      {insights.proteinPerEuroRankings[0].baseUnit.toLowerCase()}
+                    <span className="text-[var(--text-primary)] font-semibold whitespace-nowrap shrink-0">
+                      {formatCurrency(
+                        insights.proteinPerEuroRankings[0].pricePerBaseUnit
+                      )}
+                      /{normalizeUnit(insights.proteinPerEuroRankings[0].baseUnit)}
                     </span>
                   </div>
                 </>
               ) : (
-                <p className="text-xs text-zinc-500 font-mono">
-                  Requires weight/volume (KG or L) items with cached protein/100g.
+                <p className="text-[13px] text-[var(--text-muted)]">
+                  Needs weight or volume (kg / L) items with cached protein data.
                 </p>
               )}
             </div>
@@ -309,71 +337,86 @@ export function NutritionValueSection({
           {/* Protein per € Rankings Table */}
           {insights.proteinPerEuroRankings.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-300">
-                  Protein per € Rankings (KG & L Staples)
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-[15px] font-semibold text-[var(--text-primary)]">
+                  Protein per € rankings (kg &amp; L items)
                 </h3>
-                <span className="text-[11px] font-mono text-zinc-500">
+                <span className="text-[13px] text-[var(--text-muted)]">
                   Grams of protein per euro spent
                 </span>
               </div>
 
-              <div className="overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-950/60">
-                <table className="w-full text-left text-xs font-mono">
+              <div className="overflow-x-auto rounded-2xl border border-[var(--border)] bg-[var(--bg-page)]/40">
+                <table className="w-full text-left text-[13px]">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-[11px] text-zinc-400 uppercase tracking-wider">
-                      <th className="py-2.5 px-4">Product</th>
-                      <th className="py-2.5 px-3 text-center">Scores</th>
-                      <th className="py-2.5 px-3 text-right">Protein / 100g</th>
-                      <th className="py-2.5 px-3 text-right">Best Unit Price</th>
-                      <th className="py-2.5 px-4 text-right">Protein / €</th>
+                    <tr className="border-b border-[var(--border)] text-[13px] text-[var(--text-muted)]">
+                      <th className="py-3 px-4 font-medium">Product</th>
+                      <th className="py-3 px-3 font-medium text-center">
+                        Scores
+                      </th>
+                      <th className="py-3 px-3 font-medium text-right">
+                        Protein / 100g
+                      </th>
+                      <th className="py-3 px-3 font-medium text-right">
+                        Best unit price
+                      </th>
+                      <th className="py-3 px-4 font-medium text-right">
+                        Protein / €
+                      </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-800/60">
+                  <tbody className="divide-y divide-[var(--border)]">
                     {insights.proteinPerEuroRankings.map((row) => {
                       const nsStyle = getNutriScoreBadgeStyle(row.nutriScore);
                       const novaMeta = getNovaGroupMeta(row.novaGroup);
+                      const brand = getStoreBrand(
+                        row.storeName,
+                        row.storeBrandHex
+                      );
                       return (
                         <tr
                           key={row.productKey}
-                          className="hover:bg-zinc-900/50 transition-colors"
+                          className="hover:bg-[var(--bg-subtle)]/50 transition-colors"
                         >
-                          <td className="py-2.5 px-4 font-sans">
+                          <td className="py-3 px-4">
                             <div className="flex items-center gap-2 min-w-0">
                               {row.productSlug ? (
                                 <Link
                                   href={`/products/${row.productSlug}`}
-                                  className="font-semibold text-zinc-100 hover:text-emerald-400 transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+                                  className="font-semibold text-[var(--text-primary)] hover:text-[var(--primary)] transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0"
                                 >
                                   <span>{row.productName}</span>
-                                  <ArrowUpRight className="w-3 h-3 text-zinc-500" />
+                                  <ArrowUpRight className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                                 </Link>
                               ) : (
-                                <span className="font-semibold text-zinc-100">
+                                <span className="font-semibold text-[var(--text-primary)]">
                                   {row.productName}
                                 </span>
                               )}
                               <span
-                                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white whitespace-nowrap shrink-0"
-                                style={{ backgroundColor: row.storeBrandHex }}
+                                className="px-2 py-0.5 rounded-full text-[13px] leading-none font-semibold whitespace-nowrap shrink-0"
+                                style={{
+                                  backgroundColor: brand.color,
+                                  color: brand.fg,
+                                }}
                               >
                                 {row.storeName}
                               </span>
                             </div>
                           </td>
 
-                          <td className="py-2.5 px-3 text-center">
-                            <div className="inline-flex items-center gap-1">
+                          <td className="py-3 px-3 text-center">
+                            <div className="inline-flex items-center gap-1.5">
                               {nsStyle && (
                                 <span
-                                  className={`px-1.5 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap shrink-0 ${nsStyle.className}`}
+                                  className={`px-2 py-0.5 rounded-full border text-[13px] leading-none font-semibold whitespace-nowrap shrink-0 ${nsStyle.className}`}
                                 >
                                   NS {nsStyle.letter}
                                 </span>
                               )}
                               {novaMeta && (
                                 <span
-                                  className={`px-1.5 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap shrink-0 ${novaMeta.className}`}
+                                  className={`px-2 py-0.5 rounded-full border text-[13px] leading-none font-semibold whitespace-nowrap shrink-0 ${novaMeta.className}`}
                                 >
                                   {novaMeta.shortLabel}
                                 </span>
@@ -381,16 +424,17 @@ export function NutritionValueSection({
                             </div>
                           </td>
 
-                          <td className="py-2.5 px-3 text-right text-zinc-300 tabular-nums">
-                            {row.proteinPer100g.toFixed(1)} g
+                          <td className="py-3 px-3 text-right text-[var(--text-muted)] tabular-nums">
+                            {row.proteinPer100g.toFixed(1).replace(".", ",")} g
                           </td>
 
-                          <td className="py-2.5 px-3 text-right text-zinc-300 tabular-nums">
-                            €{row.pricePerBaseUnit.toFixed(2)}/{row.baseUnit.toLowerCase()}
+                          <td className="py-3 px-3 text-right text-[var(--text-muted)] tabular-nums">
+                            {formatCurrency(row.pricePerBaseUnit)}/
+                            {normalizeUnit(row.baseUnit)}
                           </td>
 
-                          <td className="py-2.5 px-4 text-right font-bold text-emerald-400 tabular-nums">
-                            {row.proteinPerEuro.toFixed(1)} g/€
+                          <td className="py-3 px-4 text-right font-semibold text-[var(--primary)] tabular-nums">
+                            {row.proteinPerEuro.toFixed(1).replace(".", ",")} g/€
                           </td>
                         </tr>
                       );

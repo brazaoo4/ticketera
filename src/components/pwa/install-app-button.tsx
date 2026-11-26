@@ -20,7 +20,10 @@ export function InstallAppButton({ className }: { className?: string }) {
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     return () =>
-      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener(
+        "beforeinstallprompt",
+        handleBeforeInstallPrompt
+      );
   }, []);
 
   async function installApp() {
@@ -35,15 +38,15 @@ export function InstallAppButton({ className }: { className?: string }) {
     <button
       type="button"
       onClick={installApp}
-      aria-label="Install App"
-      title="Install Ticketera App"
+      aria-label="Install app"
+      title="Install Ticketera app"
       className={
         className ||
-        "flex items-center gap-2 px-3 py-2 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-zinc-900 transition-colors whitespace-nowrap text-xs font-semibold"
+        "inline-flex items-center gap-2 px-3 py-2 rounded-xl text-[var(--primary)] hover:bg-[var(--bg-subtle)] transition-colors whitespace-nowrap text-[13px] font-medium cursor-pointer"
       }
     >
-      <Download className="w-3.5 h-3.5 shrink-0" />
-      <span className="whitespace-nowrap">Install App</span>
+      <Download className="w-4 h-4 shrink-0" />
+      <span className="whitespace-nowrap">Install app</span>
     </button>
   );
 }

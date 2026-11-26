@@ -138,77 +138,83 @@ export function BackupRestorePanel({
   };
 
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-6">
+    <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
       {/* Header & Download CTA */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800/80 pb-5">
+      <div className="px-5 py-4 border-b border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Archive className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="text-sm font-semibold text-white">
-              Portable Backup & Restore (.zip)
-            </span>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-semibold whitespace-nowrap shrink-0">
-              Full Snapshot
+          <div className="flex flex-wrap items-center gap-2">
+            <Archive className="w-4 h-4 text-[var(--primary)] shrink-0" />
+            <h2 className="font-display font-semibold text-[18px] text-[var(--text-primary)]">
+              Portable backup &amp; restore (.zip)
+            </h2>
+            <span className="px-2.5 py-0.5 rounded-full bg-[var(--primary-tint)] text-[var(--primary)] border border-[var(--primary)]/25 text-[13px] leading-none font-medium whitespace-nowrap shrink-0">
+              Full snapshot
             </span>
           </div>
-          <p className="text-xs text-zinc-400 max-w-2xl">
-            Export a portable archive containing database records alongside stored receipt artifacts (WebP, PDF, and JSON files from <code className="text-zinc-300">UPLOAD_DIR</code>), or restore from a snapshot during server migrations. Encrypted store sync tokens are excluded.
+          <p className="text-[13px] text-[var(--text-muted)] max-w-2xl">
+            Export a portable archive containing database records alongside stored
+            receipt photos, PDFs, and digital receipt files, or restore from a
+            snapshot when migrating servers. Encrypted store sign-in sessions are
+            excluded.
           </p>
         </div>
 
         <button
           type="button"
           onClick={handleDownloadBundle}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs whitespace-nowrap shrink-0 shadow-md shadow-emerald-500/20 transition-colors"
+          className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] font-semibold text-[13px] whitespace-nowrap shrink-0 transition-colors cursor-pointer self-start sm:self-auto"
         >
           <Download className="w-4 h-4 shrink-0" />
-          <span>Download Full Backup (.zip)</span>
+          <span>Download backup (.zip)</span>
         </button>
       </div>
 
       {/* Current Vault Snapshot Metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 space-y-1">
-          <div className="text-[10px] uppercase text-zinc-500">Receipts</div>
-          <div className="text-lg font-bold text-white tabular-nums">
+      <div className="grid grid-cols-2 lg:grid-cols-4 border-b border-[var(--border)]">
+        <div className="p-4 sm:p-5 space-y-1">
+          <div className="text-[13px] text-[var(--text-muted)]">Receipts</div>
+          <div className="font-display font-bold text-[22px] text-[var(--text-primary)] tabular-nums">
             {backupSummary.receiptsCount}
           </div>
         </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 space-y-1">
-          <div className="text-[10px] uppercase text-zinc-500">Products</div>
-          <div className="text-lg font-bold text-white tabular-nums">
+        <div className="p-4 sm:p-5 space-y-1 border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">Products</div>
+          <div className="font-display font-bold text-[22px] text-[var(--text-primary)] tabular-nums">
             {backupSummary.productsCount}
           </div>
         </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 space-y-1">
-          <div className="text-[10px] uppercase text-zinc-500">Monthly Budgets</div>
-          <div className="text-lg font-bold text-white tabular-nums">
+        <div className="p-4 sm:p-5 space-y-1 border-t lg:border-t-0 lg:border-l border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)]">
+            Monthly budgets
+          </div>
+          <div className="font-display font-bold text-[22px] text-[var(--text-primary)] tabular-nums">
             {backupSummary.budgetsCount}
           </div>
         </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 space-y-1">
-          <div className="text-[10px] uppercase text-zinc-500 flex items-center gap-1">
-            <HardDrive className="w-3 h-3 text-emerald-400 shrink-0" />
-            <span>Stored Artifacts</span>
+        <div className="p-4 sm:p-5 space-y-1 border-t border-l lg:border-t-0 border-[var(--border)]">
+          <div className="text-[13px] text-[var(--text-muted)] flex items-center gap-1.5">
+            <HardDrive className="w-3.5 h-3.5 text-[var(--primary)] shrink-0" />
+            <span>Stored files</span>
           </div>
-          <div className="text-lg font-bold text-emerald-400 tabular-nums">
+          <div className="font-display font-bold text-[22px] text-[var(--primary)] tabular-nums">
             {backupSummary.artifactFilesCount}{" "}
-            <span className="text-[11px] font-normal text-zinc-400">
-              ({backupSummary.artifactTotalMb} MB)
+            <span className="text-[13px] font-sans font-normal text-[var(--text-muted)]">
+              ({backupSummary.artifactTotalMb.replace(".", ",")} MB)
             </span>
           </div>
         </div>
       </div>
 
       {/* Restore Upload Area */}
-      <div className="rounded-2xl border border-dashed border-zinc-700/80 bg-zinc-950/50 p-5 space-y-4">
+      <div className="p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-0.5">
-            <h3 className="text-xs font-bold uppercase font-mono tracking-wider text-zinc-200">
-              Restore / Import Backup Archive
+            <h3 className="text-[15px] font-semibold text-[var(--text-primary)]">
+              Restore or import backup archive
             </h3>
-            <p className="text-xs text-zinc-400">
-              Select a <code className="text-zinc-300">.zip</code> portable bundle (or legacy <code className="text-zinc-300">.json</code> export) to inspect checksums and preview changes before writing.
+            <p className="text-[13px] text-[var(--text-muted)]">
+              Choose a .zip archive or .json backup to verify file integrity and
+              preview changes before writing.
             </p>
           </div>
 
@@ -223,37 +229,40 @@ export function BackupRestorePanel({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isInspecting || isRestoring}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-2 h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[var(--text-primary)] text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer self-start sm:self-auto"
           >
             {isInspecting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400 shrink-0" />
+              <Loader2 className="w-4 h-4 animate-spin text-[var(--primary)] shrink-0" />
             ) : (
-              <Upload className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <Upload className="w-4 h-4 text-[var(--primary)] shrink-0" />
             )}
-            <span>{selectedFile ? "Choose Different File" : "Select Backup File"}</span>
+            <span>
+              {selectedFile ? "Choose another file" : "Select backup file"}
+            </span>
           </button>
         </div>
 
         {error && (
-          <div className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-300 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <div className="p-3.5 rounded-xl border border-[var(--negative)]/30 bg-[var(--negative-tint)] text-[13px] text-[var(--negative)] flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
         {report && (
-          <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 space-y-2 text-xs">
-            <div className="flex items-center gap-2 font-bold text-emerald-300">
+          <div className="p-4 rounded-xl border border-[var(--positive)]/30 bg-[var(--positive-tint)] space-y-2 text-[13px]">
+            <div className="flex items-center gap-2 font-semibold text-[var(--positive)]">
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>
-                Restore completed ({report.mode === "replace" ? "Full Replace" : "Safe Merge"})
+                Restore completed (
+                {report.mode === "replace" ? "Full replace" : "Safe merge"})
               </span>
             </div>
-            <div className="font-mono text-[11px] text-zinc-200 flex flex-wrap gap-3 tabular-nums">
+            <div className="text-[13px] text-[var(--text-primary)] flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
               <span>Receipts restored: {report.restoredReceipts}</span>
               <span>Duplicates skipped: {report.skippedReceipts}</span>
               <span>New products: {report.restoredProducts}</span>
-              <span>Aliases: {report.restoredAliases}</span>
+              <span>Receipt matches: {report.restoredAliases}</span>
               <span>Budgets: {report.restoredBudgets}</span>
               <span>Files written: {report.restoredArtifacts}</span>
             </div>
@@ -262,68 +271,78 @@ export function BackupRestorePanel({
 
         {/* Inspection Preview Card */}
         {inspection && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-3">
-              <div className="flex items-center gap-2 text-xs font-mono">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-page)]/60 p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
+              <div className="flex flex-wrap items-center gap-2 text-[13px]">
                 <ShieldCheck
                   className={`w-4 h-4 shrink-0 ${
-                    inspection.checksumsVerified ? "text-emerald-400" : "text-amber-400"
+                    inspection.checksumsVerified
+                      ? "text-[var(--positive)]"
+                      : "text-[var(--accent)]"
                   }`}
                 />
-                <span className="font-bold text-white">{selectedFile?.name}</span>
-                <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] whitespace-nowrap shrink-0">
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {selectedFile?.name}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-[var(--bg-subtle)] border border-[var(--border)] text-[var(--text-muted)] text-[13px] leading-none tabular-nums whitespace-nowrap shrink-0">
                   v{inspection.formatVersion} · {inspection.scope}
                 </span>
               </div>
               <span
-                className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold whitespace-nowrap shrink-0 ${
+                className={`px-2.5 py-0.5 rounded-full border text-[13px] leading-none font-medium whitespace-nowrap shrink-0 ${
                   inspection.checksumsVerified
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                    : "bg-amber-500/10 text-amber-300 border border-amber-500/30"
+                    ? "bg-[var(--positive-tint)] text-[var(--positive)] border-[var(--positive)]/30"
+                    : "bg-[var(--accent-tint)] text-[var(--accent)] border-[var(--accent)]/30"
                 }`}
               >
                 {inspection.checksumsVerified
-                  ? "SHA-256 Verified"
-                  : "JSON Import (No Media)"}
+                  ? "Checksums verified"
+                  : "JSON import (no media)"}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono tabular-nums">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[13px] tabular-nums">
               <div>
-                <div className="text-[10px] text-zinc-500">Receipts</div>
-                <div className="text-zinc-200 font-bold">
+                <div className="text-[var(--text-muted)]">Receipts</div>
+                <div className="text-[var(--text-primary)] font-semibold">
                   {inspection.newReceipts} new{" "}
-                  <span className="text-zinc-500 font-normal">
+                  <span className="text-[var(--text-muted)] font-normal">
                     / {inspection.duplicateReceipts} existing
                   </span>
                 </div>
               </div>
               <div>
-                <div className="text-[10px] text-zinc-500">Products</div>
-                <div className="text-zinc-200 font-bold">
+                <div className="text-[var(--text-muted)]">Products</div>
+                <div className="text-[var(--text-primary)] font-semibold">
                   {inspection.newProducts} new{" "}
-                  <span className="text-zinc-500 font-normal">
+                  <span className="text-[var(--text-muted)] font-normal">
                     / {inspection.existingProducts} existing
                   </span>
                 </div>
               </div>
               <div>
-                <div className="text-[10px] text-zinc-500">Budgets & Stores</div>
-                <div className="text-zinc-200 font-bold">
-                  {inspection.budgetsCount} budgets · {inspection.newStores} new stores
+                <div className="text-[var(--text-muted)]">
+                  Budgets &amp; stores
+                </div>
+                <div className="text-[var(--text-primary)] font-semibold">
+                  {inspection.budgetsCount} budgets · {inspection.newStores} new
+                  stores
                 </div>
               </div>
               <div>
-                <div className="text-[10px] text-zinc-500">Receipt Files</div>
-                <div className="text-emerald-400 font-bold">
+                <div className="text-[var(--text-muted)]">Receipt files</div>
+                <div className="text-[var(--primary)] font-semibold">
                   {inspection.artifactFilesCount} files (
-                  {(inspection.totalArtifactBytes / (1024 * 1024)).toFixed(2)} MB)
+                  {(inspection.totalArtifactBytes / (1024 * 1024))
+                    .toFixed(2)
+                    .replace(".", ",")}{" "}
+                  MB)
                 </div>
               </div>
             </div>
 
             {inspection.warnings.length > 0 && (
-              <div className="text-[11px] font-mono text-amber-300 space-y-1">
+              <div className="text-[13px] text-[var(--accent)] space-y-1">
                 {inspection.warnings.map((w, idx) => (
                   <div key={idx}>• {w}</div>
                 ))}
@@ -331,29 +350,29 @@ export function BackupRestorePanel({
             )}
 
             {/* Mode Selector & Execute */}
-            <div className="pt-3 border-t border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="inline-flex rounded-xl p-1 bg-zinc-950 border border-zinc-800 self-start">
+            <div className="pt-3 border-t border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="inline-flex rounded-full p-1 bg-[var(--bg-subtle)] border border-[var(--border)] self-start">
                 <button
                   type="button"
                   onClick={() => setRestoreMode("merge")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
+                  className={`h-8 px-3 rounded-full text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                     restoreMode === "merge"
-                      ? "bg-emerald-500 text-zinc-950 shadow-sm"
-                      : "text-zinc-400 hover:text-zinc-200"
+                      ? "bg-[var(--bg-card)] text-[var(--text-primary)] font-semibold shadow-sm"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                   }`}
                 >
-                  Safe Merge (Skip Duplicates)
+                  Safe merge
                 </button>
                 <button
                   type="button"
                   onClick={() => setRestoreMode("replace")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-all ${
+                  className={`h-8 px-3 rounded-full text-[13px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                     restoreMode === "replace"
-                      ? "bg-rose-500 text-white shadow-sm"
-                      : "text-zinc-400 hover:text-zinc-200"
+                      ? "bg-[var(--negative)] text-[var(--negative-on)] font-semibold shadow-sm"
+                      : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                   }`}
                 >
-                  Full Replace (Overwrite DB)
+                  Replace all data
                 </button>
               </div>
 
@@ -361,23 +380,23 @@ export function BackupRestorePanel({
                 type="button"
                 onClick={handleStartRestore}
                 disabled={isRestoring}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 ${
+                className={`inline-flex items-center gap-2 h-10 px-4 rounded-full text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors disabled:opacity-50 cursor-pointer ${
                   restoreMode === "replace"
-                    ? "bg-rose-600 hover:bg-rose-500 text-white"
-                    : "bg-emerald-500 hover:bg-emerald-400 text-zinc-950"
+                    ? "bg-[var(--negative)] text-[var(--negative-on)]"
+                    : "bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)]"
                 }`}
               >
                 {isRestoring ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                 ) : (
-                  <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                  <RefreshCw className="w-4 h-4 shrink-0" />
                 )}
                 <span>
                   {isRestoring
                     ? "Restoring..."
                     : restoreMode === "replace"
-                    ? "Overwrite & Restore Snapshot"
-                    : "Run Safe Merge Restore"}
+                    ? "Overwrite & restore snapshot"
+                    : "Run safe merge restore"}
                 </span>
               </button>
             </div>
@@ -389,35 +408,42 @@ export function BackupRestorePanel({
       <dialog
         ref={confirmDialogRef}
         aria-labelledby={confirmTitleId}
-        className="m-auto w-[calc(100%-1.5rem)] max-w-md rounded-2xl border border-rose-500/40 bg-zinc-950 text-zinc-100 p-0 shadow-2xl backdrop:bg-black/80 backdrop:backdrop-blur-sm"
+        className="m-auto w-[calc(100%-1.5rem)] max-w-md rounded-2xl border border-[var(--negative)]/40 bg-[var(--bg-card)] text-[var(--text-primary)] p-0 shadow-2xl backdrop:bg-[var(--scrim)] backdrop:backdrop-blur-[2px]"
       >
         <div className="p-6 space-y-4">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2.5 text-rose-400">
+            <div className="flex items-center gap-2.5 text-[var(--negative)]">
               <AlertTriangle className="w-5 h-5 shrink-0" />
-              <h1 id={confirmTitleId} className="text-base font-bold text-white">
-                Confirm Full Replace Restore
-              </h1>
+              <h2
+                id={confirmTitleId}
+                className="font-display font-semibold text-[18px] text-[var(--text-primary)]"
+              >
+                Confirm full data replacement
+              </h2>
             </div>
             <button
               type="button"
               onClick={() => confirmDialogRef.current?.close("cancel")}
-              className="p-1 rounded-lg text-zinc-400 hover:text-white whitespace-nowrap shrink-0"
+              className="w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
               aria-label="Close confirmation"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            This will replace all existing receipts, products, aliases, and monthly budgets with the snapshot inside{" "}
-            <strong className="text-zinc-200">{selectedFile?.name}</strong>. Your current admin account session remains intact.
+          <p className="text-[13px] text-[var(--text-muted)] leading-relaxed">
+            This will replace all existing receipts, products, receipt matches,
+            and monthly budgets with the snapshot inside{" "}
+            <strong className="text-[var(--text-primary)]">
+              {selectedFile?.name}
+            </strong>
+            . Your current admin session stays signed in.
           </p>
 
           <div className="space-y-1.5">
             <label
               htmlFor="confirm-restore-word"
-              className="block text-[11px] font-mono uppercase text-zinc-400"
+              className="block text-[13px] font-medium text-[var(--text-primary)]"
             >
               Type RESTORE to proceed
             </label>
@@ -428,16 +454,16 @@ export function BackupRestorePanel({
               onChange={(e) => setConfirmText(e.target.value)}
               placeholder="RESTORE"
               autoFocus
-              className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white focus:outline-none focus:border-rose-500"
+              className="w-full h-10 px-3.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--negative)] text-[14px] text-[var(--text-primary)] focus:outline-none"
             />
           </div>
 
-          <div className="flex items-center justify-end gap-2.5 pt-2">
+          <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={() => confirmDialogRef.current?.close("cancel")}
               disabled={isRestoring}
-              className="px-4 py-2 rounded-xl border border-zinc-800 text-xs text-zinc-300 hover:bg-zinc-900 whitespace-nowrap shrink-0"
+              className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
             >
               Cancel
             </button>
@@ -445,14 +471,16 @@ export function BackupRestorePanel({
               type="button"
               disabled={confirmText.trim() !== "RESTORE" || isRestoring}
               onClick={() => void executeRestore(confirmText.trim())}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold whitespace-nowrap shrink-0 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-full bg-[var(--negative)] text-[var(--negative-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 disabled:opacity-40 cursor-pointer"
             >
-              {isRestoring && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
-              <span>Confirm Replace</span>
+              {isRestoring && (
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+              )}
+              <span>Confirm replace</span>
             </button>
           </div>
         </div>
       </dialog>
-    </div>
+    </section>
   );
 }

@@ -1,32 +1,30 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
-  Receipt,
-  Camera,
-  Search,
-  LogIn,
-  LogOut,
-  Shield,
+  Home,
   ShoppingBag,
+  Camera,
   GitCompare,
-  Store,
-  FileText,
+  MoreHorizontal,
+  Search,
   TrendingUp,
-  ChevronDown,
+  Store,
+  Receipt,
   Settings,
+  LogOut,
+  LogIn,
+  X,
+  ArrowRight,
 } from "lucide-react";
 import { SearchModal } from "./search-modal";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
-
-interface UserProfile {
-  id: string;
-  username: string;
-  role: "ADMIN" | "USER";
-}
+import { BrandMark } from "@/components/common/brand-mark";
+import { ThemeSwitch } from "@/components/providers/theme-provider";
+import type { UserProfile } from "./app-shell";
 
 export function MobileNav({
   user,
@@ -35,246 +33,303 @@ export function MobileNav({
   user?: UserProfile | null;
   publicCatalog?: boolean;
 }) {
-  const pathname = usePathname();
-  const isReviewPage = pathname.includes("/receipts/") && pathname.includes("/review");
+  const pathname = usePathname() || "/";
+  const isLoginPage = pathname.startsWith("/login");
+  const isReviewPage =
+    pathname.includes("/receipts/") && pathname.includes("/review");
+
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const userMenuRef = React.useRef<HTMLDivElement>(null);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
 
-  React.useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
-        setIsUserMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  useEffect(() => {
+    if (!isMoreOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isMoreOpen]);
 
-  const getPageTitle = (path: string) => {
-    if (path === "/") return "Home";
-    if (path.startsWith("/products")) return "Products";
-    if (path.startsWith("/compare")) return "Compare";
-    if (path.startsWith("/stores")) return "Stores";
-    if (path.startsWith("/upload")) return "Upload Receipt";
-    if (path.startsWith("/my-receipts")) return "My Receipts";
-    if (path.startsWith("/my-stats")) return "My Spending";
-    if (path.startsWith("/admin/products")) return "Product Catalogue";
-    if (path.startsWith("/admin/users")) return "User Management";
-    if (path.startsWith("/admin/settings")) return "System Settings";
-    if (path.startsWith("/admin")) return "Admin Console";
-    if (path.startsWith("/login")) return "Sign In";
-    return "Ticketera";
-  };
+  const showNav = !!user || publicCatalog;
+  const uploadTarget = user ? "/upload" : "/login?callbackUrl=/upload";
 
   const isActive = (path: string) => {
     if (path === "/") return pathname === "/";
     return pathname.startsWith(path);
   };
 
-  const uploadTarget = user ? "/upload" : "/login?callbackUrl=/upload";
-  const showNav = !!user || publicCatalog;
+  const isMoreActive =
+    pathname.startsWith("/my-stats") ||
+    pathname.startsWith("/stores") ||
+    pathname.startsWith("/my-receipts") ||
+    pathname.startsWith("/receipts") ||
+    pathname.startsWith("/admin");
 
   return (
     <>
-      {/* Mobile Top Header */}
-      <header className="lg:hidden sticky top-0 z-40 w-full backdrop-blur-md bg-zinc-950/90 border-b border-zinc-800/80 px-4 py-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <Link
-            href="/"
-            className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0"
-          >
-            <Receipt className="w-4 h-4 stroke-[2.2]" />
-          </Link>
-          <div>
-            <h1 className="text-sm font-semibold text-zinc-100 flex items-center gap-1.5 whitespace-nowrap shrink-0">
-              <span>{getPageTitle(pathname)}</span>
-              {user?.role === "ADMIN" && pathname.startsWith("/admin") && (
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 whitespace-nowrap shrink-0">
-                  ADMIN
-                </span>
-              )}
-            </h1>
-          </div>
-        </div>
+      {/* Mobile Top Bar */}
+      <header
+        className={`md:hidden sticky top-0 z-40 w-full px-4 h-[58px] flex items-center justify-between gap-2 transition-colors ${
+          isLoginPage
+            ? "bg-transparent"
+            : "bg-[var(--bg-header-scrolled)] backdrop-blur-md border-b border-[var(--border)]"
+        }`}
+      >
+        <Link
+          href="/"
+          className="inline-flex items-center shrink-0"
+          aria-label="Ticketera home"
+        >
+          <BrandMark compact />
+        </Link>
 
-        <div className="flex items-center gap-2">
-          {/* Quick Search Button */}
-          {showNav && !pathname.startsWith("/products") && (
+        <div className="flex items-center gap-2 shrink-0">
+          {!isLoginPage && showNav && !pathname.startsWith("/products") && (
             <button
+              type="button"
               onClick={() => setIsSearchOpen(true)}
-              className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 shrink-0"
-              aria-label="Search product"
+              aria-label="Search groceries"
+              className="w-9 h-9 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] inline-flex items-center justify-center shrink-0 cursor-pointer"
             >
               <Search className="w-4 h-4" />
             </button>
           )}
 
-          {/* User state / Dropdown or Login */}
-          {user ? (
-            <div className="relative shrink-0" ref={userMenuRef}>
-              <button
-                type="button"
-                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="flex items-center gap-1.5 p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-zinc-100 whitespace-nowrap shrink-0"
-              >
-                <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-semibold shrink-0">
-                  {user.username.charAt(0).toUpperCase()}
-                </div>
-                <ChevronDown className={`w-3 h-3 text-zinc-400 transition-transform ${isUserMenuOpen ? "rotate-180" : ""}`} />
-              </button>
+          <ThemeSwitch />
 
-              {/* Mobile Profile Dropdown */}
-              {isUserMenuOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-md shadow-2xl p-1 z-50 text-xs animate-in fade-in-50 zoom-in-95">
-                  <div className="px-3 py-2 border-b border-zinc-800/80 mb-1">
-                    <p className="font-semibold text-zinc-200 truncate whitespace-nowrap">{user.username}</p>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50 inline-block mt-0.5">
-                      {user.role}
-                    </span>
-                  </div>
-
-                  <Link
-                    href="/my-stats"
-                    onClick={() => setIsUserMenuOpen(false)}
-                    className="flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    <TrendingUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>My Inflation</span>
-                  </Link>
-                  <Link
-                    href="/my-receipts"
-                    onClick={() => setIsUserMenuOpen(false)}
-                    className="flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                    <span>My Receipts</span>
-                  </Link>
-
-                  {user.role === "ADMIN" && (
-                    <div className="border-t border-zinc-800/60 my-1 pt-1">
-                      <Link
-                        href="/admin/settings"
-                        onClick={() => setIsUserMenuOpen(false)}
-                        className="flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/60 rounded-lg transition-colors whitespace-nowrap"
-                      >
-                        <Settings className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span>Settings</span>
-                      </Link>
-                    </div>
-                  )}
-
-                  <div className="border-t border-zinc-800/60 my-1 pt-1">
-                    <InstallAppButton />
-                    <button
-                      onClick={() => signOut({ callbackUrl: "/login" })}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors text-left whitespace-nowrap shrink-0"
-                    >
-                      <LogOut className="w-3.5 h-3.5 shrink-0" />
-                      <span>Sign Out</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : pathname !== "/login" ? (
+          {!isLoginPage && !user && (
             <Link
               href="/login"
-              className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 shrink-0 flex items-center gap-1.5 text-xs font-semibold px-2.5 whitespace-nowrap"
+              className="h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center whitespace-nowrap shrink-0"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Sign In</span>
+              Sign in
             </Link>
-          ) : null}
+          )}
         </div>
       </header>
 
-      {/* Sticky Bottom Navigation Bar (Hidden on Review page, login page, or unauthenticated private instance) */}
-      {!isReviewPage && showNav && pathname !== "/login" && (
+      {/* Mobile Bottom Tab Bar (5 aligned items: Home | Groceries | + Scan | Compare | More) */}
+      {!isLoginPage && !isReviewPage && showNav && (
         <nav
           aria-label="Mobile navigation"
-          className="lg:hidden fixed bottom-0 left-0 right-0 z-50 backdrop-blur-xl bg-zinc-950/95 border-t border-zinc-800/80 px-2 py-1 pb-[max(0.6rem,env(safe-area-inset-bottom))]"
+          className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[var(--bg-card)]/95 backdrop-blur-md border-t border-[var(--border)] px-1 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
         >
-          <div className="grid grid-cols-5 items-end justify-items-center max-w-md mx-auto">
-            {/* Slot 1: Home */}
+          <div className="grid grid-cols-5 items-center max-w-md mx-auto">
             <Link
               href="/"
-              className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-colors ${
-                isActive("/") && pathname === "/"
-                  ? "text-emerald-400 font-semibold"
-                  : "text-zinc-400 hover:text-zinc-200"
+              aria-current={isActive("/") ? "page" : undefined}
+              className={`flex flex-col items-center justify-center gap-0.5 py-1 rounded-xl text-[13px] font-medium transition-colors ${
+                isActive("/")
+                  ? "text-[var(--primary)] font-semibold"
+                  : "text-[var(--text-muted)]"
               }`}
             >
-              <TrendingUp className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px] tracking-tight whitespace-nowrap shrink-0">Home</span>
+              <Home className="w-[19px] h-[19px]" />
+              <span className="whitespace-nowrap">Home</span>
             </Link>
 
-            {/* Slot 2: Products */}
             <Link
               href="/products"
-              className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-colors ${
+              aria-current={isActive("/products") ? "page" : undefined}
+              className={`flex flex-col items-center justify-center gap-0.5 py-1 rounded-xl text-[13px] font-medium transition-colors ${
                 isActive("/products")
-                  ? "text-emerald-400 font-semibold"
-                  : "text-zinc-400 hover:text-zinc-200"
+                  ? "text-[var(--primary)] font-semibold"
+                  : "text-[var(--text-muted)]"
               }`}
             >
-              <ShoppingBag className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px] tracking-tight whitespace-nowrap shrink-0">Products</span>
+              <ShoppingBag className="w-[19px] h-[19px]" />
+              <span className="whitespace-nowrap">Groceries</span>
             </Link>
 
-            {/* Slot 3: Center Elevated Upload / Scan Receipt Button */}
-            <div className="flex flex-col items-center -mt-5">
-              <Link
-                href={uploadTarget}
-                aria-label="Upload or scan receipt"
-                className="w-12 h-12 rounded-full bg-gradient-to-tr from-emerald-500 to-emerald-400 text-zinc-950 flex items-center justify-center shadow-lg shadow-emerald-500/30 hover:scale-105 active:scale-95 transition-all border-2 border-zinc-950"
-              >
-                <Camera className="w-5 h-5 stroke-[2.4]" />
-              </Link>
-              <span className="text-[9px] text-emerald-400 font-semibold mt-1 tracking-tight whitespace-nowrap shrink-0">
-                + Receipt
-              </span>
-            </div>
+            <Link
+              href={uploadTarget}
+              aria-current={isActive("/upload") ? "page" : undefined}
+              className="flex flex-col items-center justify-center gap-0.5 py-1 rounded-xl text-[13px] font-semibold text-[var(--primary)] transition-colors"
+            >
+              <Camera className="w-[19px] h-[19px]" />
+              <span className="whitespace-nowrap">+ Scan</span>
+            </Link>
 
-            {/* Slot 4: Compare */}
             <Link
               href="/compare"
-              className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-colors ${
+              aria-current={isActive("/compare") ? "page" : undefined}
+              className={`flex flex-col items-center justify-center gap-0.5 py-1 rounded-xl text-[13px] font-medium transition-colors ${
                 isActive("/compare")
-                  ? "text-emerald-400 font-semibold"
-                  : "text-zinc-400 hover:text-zinc-200"
+                  ? "text-[var(--primary)] font-semibold"
+                  : "text-[var(--text-muted)]"
               }`}
             >
-              <GitCompare className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px] tracking-tight whitespace-nowrap shrink-0">Compare</span>
+              <GitCompare className="w-[19px] h-[19px]" />
+              <span className="whitespace-nowrap">Compare</span>
             </Link>
 
-            {/* Slot 5: My Data / Stores */}
-            <Link
-              href={user ? "/my-stats" : "/stores"}
-              className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-colors ${
-                isActive(user ? "/my-stats" : "/stores")
-                  ? "text-emerald-400 font-semibold"
-                  : "text-zinc-400 hover:text-zinc-200"
+            <button
+              type="button"
+              onClick={() => setIsMoreOpen(true)}
+              aria-expanded={isMoreOpen}
+              className={`flex flex-col items-center justify-center gap-0.5 py-1 rounded-xl text-[13px] font-medium transition-colors cursor-pointer ${
+                isMoreActive
+                  ? "text-[var(--primary)] font-semibold"
+                  : "text-[var(--text-muted)]"
               }`}
             >
-              {user ? (
-                <>
-                  <FileText className="w-5 h-5 mb-0.5" />
-                  <span className="text-[10px] tracking-tight whitespace-nowrap shrink-0">My Data</span>
-                </>
-              ) : (
-                <>
-                  <Store className="w-5 h-5 mb-0.5" />
-                  <span className="text-[10px] tracking-tight whitespace-nowrap shrink-0">Stores</span>
-                </>
-              )}
-            </Link>
+              <MoreHorizontal className="w-[19px] h-[19px]" />
+              <span className="whitespace-nowrap">More</span>
+            </button>
           </div>
         </nav>
       )}
 
-      {/* Global Search Dialog */}
+      {/* Mobile More Bottom Sheet */}
+      {isMoreOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-more-heading"
+          className="md:hidden fixed inset-0 z-50 flex items-end justify-center bg-[var(--scrim)]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsMoreOpen(false);
+          }}
+        >
+          <div className="w-full max-w-lg rounded-t-3xl border-t border-[var(--border)] bg-[var(--bg-card)] px-5 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2
+                  id="mobile-more-heading"
+                  className="font-display text-lg font-semibold text-[var(--text-primary)]"
+                >
+                  More pages
+                </h2>
+                {user && (
+                  <p className="text-[13px] text-[var(--text-muted)]">
+                    Signed in as {user.username}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMoreOpen(false)}
+                aria-label="Close menu"
+                className="w-9 h-9 rounded-full border border-[var(--border)] inline-flex items-center justify-center text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="divide-y divide-[var(--border)]">
+              {user && (
+                <Link
+                  href="/my-stats"
+                  onClick={() => setIsMoreOpen(false)}
+                  className="flex items-center justify-between gap-3 py-3 text-left"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <TrendingUp className="w-4 h-4 text-[var(--primary)] shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[15px] text-[var(--text-primary)]">
+                        Spending
+                      </div>
+                      <div className="text-[13px] text-[var(--text-muted)]">
+                        Monthly totals, basket trends, and VAT
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                </Link>
+              )}
+
+              <Link
+                href="/stores"
+                onClick={() => setIsMoreOpen(false)}
+                className="flex items-center justify-between gap-3 py-3 text-left"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Store className="w-4 h-4 text-[var(--primary)] shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-[15px] text-[var(--text-primary)]">
+                      Supermarkets
+                    </div>
+                    <div className="text-[13px] text-[var(--text-muted)]">
+                      Tracked chains and store prices
+                    </div>
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+              </Link>
+
+              {user && (
+                <Link
+                  href="/my-receipts"
+                  onClick={() => setIsMoreOpen(false)}
+                  className="flex items-center justify-between gap-3 py-3 text-left"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Receipt className="w-4 h-4 text-[var(--primary)] shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[15px] text-[var(--text-primary)]">
+                        Receipts
+                      </div>
+                      <div className="text-[13px] text-[var(--text-muted)]">
+                        Browse and manage saved tickets
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                </Link>
+              )}
+
+              {user?.role === "ADMIN" && (
+                <Link
+                  href="/admin/settings"
+                  onClick={() => setIsMoreOpen(false)}
+                  className="flex items-center justify-between gap-3 py-3 text-left"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Settings className="w-4 h-4 text-[var(--primary)] shrink-0" />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[15px] text-[var(--text-primary)]">
+                        Settings and administration
+                      </div>
+                      <div className="text-[13px] text-[var(--text-muted)]">
+                        Privacy, household users, and store sync
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                </Link>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between gap-3">
+              <InstallAppButton className="h-9 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-primary)] text-[13px] font-medium inline-flex items-center gap-1.5" />
+
+              {user ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMoreOpen(false);
+                    signOut({ callbackUrl: "/login" });
+                  }}
+                  className="h-9 px-4 rounded-full border border-[var(--border)] text-[var(--negative)] hover:bg-[var(--negative-tint)] text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer ml-auto"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Sign out</span>
+                </button>
+              ) : (
+                <Link
+                  href="/login"
+                  onClick={() => setIsMoreOpen(false)}
+                  className="h-9 px-4 rounded-full bg-[var(--primary)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 ml-auto"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Sign in</span>
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <SearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}

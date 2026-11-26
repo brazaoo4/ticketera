@@ -1,56 +1,54 @@
 "use client";
 
-import React, { useState, useTransition, useMemo } from "react";
-import Link from "next/link";
+import React, { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Calendar,
-  Store as StoreIcon,
-  Sparkles,
   CheckCircle2,
   AlertCircle,
-  Tag,
-  Trash2,
-  Plus,
+  Sparkles,
   Search,
+  Pencil,
+  Trash2,
   Eye,
-  RefreshCw,
-  Star,
+  EyeOff,
   ChevronDown,
-  ChevronUp,
-  FileText,
-  Upload,
+  Plus,
+  Loader2,
+  Star,
+  RotateCcw,
   ArrowRight,
-  ExternalLink,
-  Edit2,
-  Check,
-  X,
-  Clock,
-  Scale,
+  Wand2,
   ScanBarcode,
 } from "lucide-react";
-import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
-import { ReceiptViewer } from "./receipt-viewer";
-import {
-  ProductSearchModal,
-  SearchedProduct,
-} from "./product-search-modal";
-import { BarcodeScannerModal } from "@/components/common/barcode-scanner-modal";
 import {
   confirmReceiptAction,
   deleteReceiptAction,
   enrichReceiptItemsWithAIAction,
   reopenReceiptAction,
-  ReviewItemInput,
+  type ReviewItemInput,
 } from "./actions";
-import {
-  type CatalogLookupResult,
-  type ProductNutritionMeta,
+import type {
+  CatalogLookupResult,
+  ProductNutritionMeta,
 } from "@/lib/catalog/parser";
 import {
   getNovaGroupMeta,
   getNutriScoreBadgeStyle,
 } from "@/lib/analytics/nutrition";
+import { CANONICAL_CATEGORIES } from "@/lib/ai/schema";
+import { ReceiptViewer } from "./receipt-viewer";
+import { ProductSearchModal, type SearchedProduct } from "./product-search-modal";
+import { BarcodeScannerModal } from "@/components/common/barcode-scanner-modal";
+import {
+  formatCurrency,
+  formatUnitPrice,
+  formatLineMeasure,
+  formatDate,
+  formatDateInputDDMMYYYY,
+  parseDDMMYYYYToISO,
+  normalizeUnit,
+  getStoreBrand,
+} from "@/lib/format";
 
 export interface SerializedStore {
   id: string;
@@ -118,2176 +116,1576 @@ interface ReviewWorkstationProps {
 }
 
 interface ExtendedItemState extends ReviewItemInput {
-  isEditing?: boolean;
-  isCustomManual?: boolean;
-  countInSanityTotal?: boolean;
+  localKey: string;
+  isEditing: boolean;
   barcode?: string | null;
   nutrition?: ProductNutritionMeta | null;
   matchedProductInfo?: {
+    id: string;
     displayName: string;
     category: string;
     baseUnit: "KG" | "L" | "UNIT";
-    isStaple?: boolean;
+    isStaple: boolean;
+  } | null;
+}
+
+function recomputeItemMetrics(item: ExtendedItemState): ExtendedItemState {
+  const safeQty = item.quantity > 0 ? item.quantity : 1;
+  const safeMeasure = item.unitMeasure > 0 ? item.unitMeasure : 1;
+  const safeTotal = Number.isFinite(item.totalPrice) ? item.totalPrice : 0;
+  const unitPrice = Number((safeTotal / safeQty).toFixed(4));
+  const pricePerBaseUnit = Number((safeTotal / safeMeasure).toFixed(4));
+  return {
+    ...item,
+    unitPrice,
+    pricePerBaseUnit,
   };
+}
+
+function buildInitialItems(
+  rawItems: SerializedReceiptItem[]
+): ExtendedItemState[] {
+  return rawItems.map((it, idx) => ({
+    localKey: it.id || `item-${idx}`,
+    id: it.id,
+    rawName: it.rawName,
+    suggestedName: it.suggestedName,
+    suggestedCat: it.suggestedCat || "Other",
+    matchConfidence: it.matchConfidence ?? 0,
+    mode: it.productId ? "link_existing" : "create_new",
+    productId: it.productId ?? null,
+    newProductName: it.product?.displayName || it.suggestedName,
+    newProductCategory: it.product?.category || it.suggestedCat || "Other",
+    newProductBaseUnit: it.product?.baseUnit || it.baseUnit || "UNIT",
+    newProductIsStaple: Boolean(it.product?.isStaple),
+    quantity: it.quantity || 1,
+    unitPrice: it.unitPrice || 0,
+    totalPrice: it.totalPrice || 0,
+    baseUnit: it.baseUnit || "UNIT",
+    unitMeasure: it.unitMeasure || 1,
+    pricePerBaseUnit: it.pricePerBaseUnit || 0,
+    isVariableWeight:
+      it.baseUnit === "KG" &&
+      it.unitMeasure > 0 &&
+      Math.abs(it.unitMeasure - 1) > 0.001,
+    isDiscount: Boolean(it.isDiscount),
+    excluded: Boolean(it.excluded),
+    isEditing: false,
+    matchedProductInfo: it.product
+      ? {
+          id: it.product.id,
+          displayName: it.product.displayName,
+          category: it.product.category,
+          baseUnit: it.product.baseUnit,
+          isStaple: it.product.isStaple,
+        }
+      : null,
+  }));
 }
 
 export function ReviewWorkstation({
   receipt,
   stores,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  currentUserRole: _currentUserRole = "USER",
   nextPendingId = null,
-  pendingReviewCount = 0,
 }: ReviewWorkstationProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
 
-  // Receipt Level Metadata State
-  const [storeId, setStoreId] = useState(receipt.storeId);
-  const [purchaseDate, setPurchaseDate] = useState(
-    receipt.purchaseDate.slice(0, 10)
-  );
-  const [receiptTotal, setReceiptTotal] = useState<number>(
-    receipt.totalAmount || 0
-  );
   const [status, setStatus] = useState<"REVIEW" | "CONFIRMED">(receipt.status);
-  const [receiptAiProvider, setReceiptAiProvider] = useState<string | null>(
-    receipt.aiProvider
+  const [storeId, setStoreId] = useState(receipt.storeId);
+  const [dateInput, setDateInput] = useState(() =>
+    formatDateInputDDMMYYYY(receipt.purchaseDate)
   );
-  const [isEnrichingAI, setIsEnrichingAI] = useState(false);
-
-  // Items State
-  const [items, setItems] = useState<ExtendedItemState[]>(() => {
-    return receipt.items.map((i) => {
-      const isLinked = !!i.productId && !!i.product;
-      const initialMode: "create_new" | "link_existing" = isLinked
-        ? "link_existing"
-        : "create_new";
-
-      const effectiveBaseUnit = (isLinked && i.product?.baseUnit)
-        ? (i.product.baseUnit as "KG" | "L" | "UNIT")
-        : (i.baseUnit as "KG" | "L" | "UNIT") || "UNIT";
-
-      return {
-        id: i.id,
-        rawName: i.rawName,
-        suggestedName: i.suggestedName || i.rawName,
-        suggestedCat: i.suggestedCat || i.product?.category || "Other",
-        matchConfidence: i.matchConfidence,
-        mode: initialMode,
-        productId: i.productId || null,
-        newProductName: isLinked ? undefined : i.suggestedName || i.rawName,
-        newProductCategory: isLinked ? undefined : i.suggestedCat || "Other",
-        newProductBaseUnit: isLinked ? undefined : effectiveBaseUnit,
-        newProductIsStaple: isLinked ? i.product?.isStaple : false,
-        quantity: i.quantity || 1,
-        unitPrice: i.unitPrice || 0,
-        totalPrice: i.totalPrice || 0,
-        baseUnit: effectiveBaseUnit,
-        unitMeasure: i.unitMeasure || 1,
-        pricePerBaseUnit: i.pricePerBaseUnit || 0,
-        isDiscount: i.isDiscount,
-        excluded: i.excluded,
-        countInSanityTotal: true,
-        matchedProductInfo: i.product
-          ? {
-              displayName: i.product.displayName,
-              category: i.product.category,
-              baseUnit: i.product.baseUnit,
-              isStaple: i.product.isStaple,
-            }
-          : undefined,
-      };
-    });
-  });
-
-  // UI Accordion & Drawer Controls
-  const [pendingExpanded, setPendingExpanded] = useState(true);
-  const [matchedExpanded, setMatchedExpanded] = useState(true);
-  const [excludedExpanded, setExcludedExpanded] = useState(false);
-  const [mobileEvidenceOpen, setMobileEvidenceOpen] = useState(false);
-
-  // Search Modal Controls
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
-  const [searchTargetIndex, setSearchTargetIndex] = useState<number | null>(
-    null
+  const [totalAmountInput, setTotalAmountInput] = useState(() =>
+    receipt.totalAmount.toFixed(2)
+  );
+  const [items, setItems] = useState<ExtendedItemState[]>(() =>
+    buildInitialItems(receipt.items)
   );
 
-  // UI Feedback states
-  const [feedbackError, setFeedbackError] = useState<string | null>(null);
-  const [feedbackSuccess, setFeedbackSuccess] = useState<string | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showMobileViewer, setShowMobileViewer] = useState(false);
 
-  // Live Math Sanity Calculation
-  const mathSanity = useMemo(() => {
-    // Active items: not excluded and not discount
-    const activeCount = items.filter((i) => !i.excluded && !i.isDiscount).length;
-
-    // Sum of items that count towards sanity total
-    const calculatedSum = items.reduce((acc, item) => {
-      // If item is completely excluded and not counted in sanity total, skip
-      if (item.excluded && !item.countInSanityTotal) return acc;
-      // Discount lines are negative in calculation
-      if (item.isDiscount) {
-        return acc - Math.abs(item.totalPrice);
-      }
-      return acc + (item.excluded ? 0 : item.totalPrice);
-    }, 0);
-
-    const delta = Math.abs(calculatedSum - receiptTotal);
-    const isBalanced = delta < 0.02;
-
-    return {
-      activeCount,
-      calculatedSum: Math.round(calculatedSum * 100) / 100,
-      delta: Math.round(delta * 100) / 100,
-      isBalanced,
-      diffSign: calculatedSum >= receiptTotal ? "+" : "-",
-    };
-  }, [items, receiptTotal]);
-
-  // Current store details
-  const currentStore = useMemo(() => {
-    return (
-      stores.find((s) => s.id === storeId) ||
-      receipt.store || {
-        id: storeId,
-        name: "Supermarket",
-        brandHex: "#10b981",
-        slug: "store",
-      }
-    );
-  }, [stores, storeId, receipt.store]);
-
-  // Three-Tier Groups
-  const pendingItems = useMemo(() => {
-    return items
-      .map((item, index) => ({ item, index }))
-      .filter(
-        ({ item }) =>
-          !item.excluded && !item.isDiscount && item.matchConfidence < 1.0
-      );
-  }, [items]);
-
-  const autoMatchedItems = useMemo(() => {
-    return items
-      .map((item, index) => ({ item, index }))
-      .filter(
-        ({ item }) =>
-          !item.excluded && !item.isDiscount && item.matchConfidence >= 1.0
-      );
-  }, [items]);
-
-  const excludedItems = useMemo(() => {
-    return items
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.excluded || item.isDiscount);
-  }, [items]);
-
-  // Handlers for modifying items
-  const updateItem = (index: number, partial: Partial<ExtendedItemState>) => {
-    setItems((prev) => {
-      const next = [...prev];
-      const target = { ...next[index], ...partial };
-
-      // Recalculate normalized price if total, measure, or unit changed
-      if (
-        partial.totalPrice !== undefined ||
-        partial.unitMeasure !== undefined ||
-        partial.baseUnit !== undefined
-      ) {
-        const total = target.totalPrice || 0;
-        const measure = target.unitMeasure || 1;
-        target.pricePerBaseUnit =
-          measure > 0 && total > 0 && !target.isDiscount
-            ? Math.round((total / measure) * 100) / 100
-            : 0;
-      }
-
-      next[index] = target;
-      return next;
-    });
-  };
-
-  const toggleItemExcluded = (index: number) => {
-    setItems((prev) => {
-      const next = [...prev];
-      const current = next[index];
-      next[index] = {
-        ...current,
-        excluded: !current.excluded,
-      };
-      return next;
-    });
-  };
-
-  const removeItem = (index: number) => {
-    setItems((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  const addManualLine = () => {
-    const newItem: ExtendedItemState = {
-      id: `manual-${Date.now()}`,
-      rawName: "MANUAL ITEM",
-      suggestedName: "New Product",
-      suggestedCat: "Other",
-      matchConfidence: 0,
-      mode: "create_new",
-      productId: null,
-      newProductName: "New Product",
-      newProductCategory: "Other",
-      newProductBaseUnit: "UNIT",
-      newProductIsStaple: false,
-      quantity: 1,
-      unitPrice: 0,
-      totalPrice: 0,
-      baseUnit: "UNIT",
-      unitMeasure: 1,
-      pricePerBaseUnit: 0,
-      isDiscount: false,
-      excluded: false,
-      isEditing: true,
-      isCustomManual: true,
-      countInSanityTotal: true,
-    };
-    setItems((prev) => [newItem, ...prev]);
-    setPendingExpanded(true);
-  };
-
-  // Open Search Modal for a specific item
-  const openSearchModal = (itemIndex: number) => {
-    setSearchTargetIndex(itemIndex);
-    setSearchModalOpen(true);
-  };
-
-  const handleSelectProduct = (product: SearchedProduct) => {
-    if (searchTargetIndex === null) return;
-    const currentItem = items[searchTargetIndex];
-
-    let newMeasure = currentItem.unitMeasure || 1;
-    if (
-      product.baseUnit === "KG" &&
-      newMeasure === 1 &&
-      currentItem.unitPrice > 0 &&
-      currentItem.totalPrice > 0 &&
-      currentItem.unitPrice > currentItem.totalPrice
-    ) {
-      newMeasure = Number(
-        (currentItem.totalPrice / currentItem.unitPrice).toFixed(3)
-      );
+  useEffect(() => {
+    if (!showMobileViewer) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setShowMobileViewer(false);
     }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showMobileViewer]);
+  const [showDiscountsSection, setShowDiscountsSection] = useState(false);
+  const [searchModalKey, setSearchModalKey] = useState<string | null>(null);
+  const [barcodeTargetKey, setBarcodeTargetKey] = useState<string | null>(null);
 
-    const pricePerBase =
-      newMeasure > 0
-        ? Math.round(((currentItem.totalPrice || 0) / newMeasure) * 100) / 100
-        : 0;
+  const [isReopening, setIsReopening] = useState(false);
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-    updateItem(searchTargetIndex, {
-      mode: "link_existing",
-      productId: product.id,
-      matchConfidence: 1.0,
-      baseUnit: product.baseUnit,
-      unitMeasure: newMeasure,
-      pricePerBaseUnit: pricePerBase,
-      matchedProductInfo: {
-        displayName: product.displayName,
-        category: product.category,
+  const [actionBanner, setActionBanner] = useState<{
+    tone: "error" | "success";
+    text: string;
+  } | null>(null);
+
+  const [catalogResults, setCatalogResults] = useState<
+    Record<
+      string,
+      { loading: boolean; result: CatalogLookupResult | null; error?: string }
+    >
+  >({});
+
+  const isEditable = status === "REVIEW";
+
+  const currentStore = useMemo(
+    () => stores.find((s) => s.id === storeId) || receipt.store,
+    [stores, storeId, receipt.store]
+  );
+  const brand = getStoreBrand(
+    currentStore.slug || currentStore.name,
+    currentStore.brandHex
+  );
+
+  const parsedDateISO = parseDDMMYYYYToISO(dateInput);
+  const parsedTotalAmount = parseFloat(totalAmountInput.replace(",", ".")) || 0;
+
+  const activeItems = useMemo(
+    () => items.filter((it) => !it.excluded && !it.isDiscount),
+    [items]
+  );
+  const pendingItems = useMemo(
+    () =>
+      activeItems.filter(
+        (it) => !it.productId && it.matchConfidence < 0.72
+      ),
+    [activeItems]
+  );
+  const matchedItems = useMemo(
+    () =>
+      activeItems.filter(
+        (it) => Boolean(it.productId) || it.matchConfidence >= 0.72
+      ),
+    [activeItems]
+  );
+  const discountAndExcludedItems = useMemo(
+    () => items.filter((it) => it.isDiscount || it.excluded),
+    [items]
+  );
+
+  const calculatedLineSum = useMemo(() => {
+    return items
+      .filter((it) => !it.excluded)
+      .reduce((acc, it) => acc + (Number(it.totalPrice) || 0), 0);
+  }, [items]);
+
+  const totalDifference = Math.abs(calculatedLineSum - parsedTotalAmount);
+
+  function updateItem(
+    localKey: string,
+    updater: (prev: ExtendedItemState) => ExtendedItemState
+  ) {
+    setItems((prev) =>
+      prev.map((it) => (it.localKey === localKey ? updater(it) : it))
+    );
+  }
+
+  function handleSelectProduct(product: SearchedProduct) {
+    if (!searchModalKey) return;
+    updateItem(searchModalKey, (it) => {
+      const next: ExtendedItemState = {
+        ...it,
+        mode: "link_existing",
+        productId: product.id,
+        suggestedName: product.displayName,
+        suggestedCat: product.category,
         baseUnit: product.baseUnit,
-        isStaple: product.isStaple,
-      },
-      newProductCategory: product.category,
-      newProductBaseUnit: product.baseUnit,
+        matchConfidence: 1,
+        matchedProductInfo: {
+          id: product.id,
+          displayName: product.displayName,
+          category: product.category,
+          baseUnit: product.baseUnit,
+          isStaple: Boolean(product.isStaple),
+        },
+      };
+      return recomputeItemMetrics(next);
     });
-    setSearchModalOpen(false);
-    setSearchTargetIndex(null);
-  };
+    setSearchModalKey(null);
+  }
 
-  const handleSwitchToCreateNew = () => {
-    if (searchTargetIndex === null) return;
-    const target = items[searchTargetIndex];
-
-    updateItem(searchTargetIndex, {
+  function handleSwitchToCreateNew(localKey?: string) {
+    const key = localKey || searchModalKey;
+    if (!key) return;
+    updateItem(key, (it) => ({
+      ...it,
       mode: "create_new",
       productId: null,
-      matchConfidence: 0.0,
-      matchedProductInfo: undefined,
-      newProductName: target.suggestedName || target.rawName,
-      newProductCategory: target.suggestedCat || "Other",
-      newProductBaseUnit: target.baseUnit || "UNIT",
-    });
-    setSearchModalOpen(false);
-    setSearchTargetIndex(null);
-  };
+      matchedProductInfo: null,
+      newProductName: it.newProductName || it.suggestedName || it.rawName,
+      newProductCategory: it.newProductCategory || it.suggestedCat || "Other",
+      newProductBaseUnit: it.newProductBaseUnit || it.baseUnit || "UNIT",
+      isEditing: true,
+    }));
+    if (searchModalKey) setSearchModalKey(null);
+  }
 
-  const handleApplyBarcodeFromModal = (match: CatalogLookupResult) => {
-    if (searchTargetIndex === null) return;
-    const currentItem = items[searchTargetIndex];
-    const isLinked = currentItem.mode === "link_existing" && !!currentItem.matchedProductInfo;
-    const qty = Math.max(Number(currentItem.quantity) || 1, 1);
+  function handleAddEmptyItem() {
+    const newKey = `manual-${Date.now()}`;
+    setItems((prev) => [
+      {
+        localKey: newKey,
+        rawName: "Manual item",
+        suggestedName: "New grocery item",
+        suggestedCat: "Other",
+        matchConfidence: 1,
+        mode: "create_new",
+        productId: null,
+        newProductName: "New grocery item",
+        newProductCategory: "Other",
+        newProductBaseUnit: "UNIT",
+        newProductIsStaple: false,
+        quantity: 1,
+        unitPrice: 0,
+        totalPrice: 0,
+        baseUnit: "UNIT",
+        unitMeasure: 1,
+        pricePerBaseUnit: 0,
+        isDiscount: false,
+        excluded: false,
+        isEditing: true,
+        matchedProductInfo: null,
+      },
+      ...prev,
+    ]);
+  }
 
-    const nextBaseUnit =
-      isLinked && currentItem.matchedProductInfo
-        ? currentItem.matchedProductInfo.baseUnit
-        : match.hasParsedQuantity !== false
-        ? match.baseUnit
-        : currentItem.baseUnit;
+  async function handleCatalogLookup(item: ExtendedItemState) {
+    const query =
+      item.newProductName || item.suggestedName || item.rawName || "";
+    if (!query.trim()) return;
 
-    const nextUnitMeasure =
-      match.hasParsedQuantity !== false && match.unitMeasurePerPack > 0
-        ? Number((qty * match.unitMeasurePerPack).toFixed(3))
-        : currentItem.unitMeasure;
-
-    updateItem(searchTargetIndex, {
-      suggestedName: match.productName || currentItem.suggestedName,
-      ...(isLinked
-        ? {}
-        : {
-            newProductName: match.productName || currentItem.newProductName,
-            newProductBaseUnit: nextBaseUnit,
-          }),
-      baseUnit: nextBaseUnit,
-      unitMeasure: nextUnitMeasure,
-      isVariableWeight: false,
-      barcode: match.ean || match.nutrition?.ean || currentItem.barcode || null,
-      nutrition: match.nutrition || currentItem.nutrition || null,
-    });
-    setSearchModalOpen(false);
-    setSearchTargetIndex(null);
-  };
-
-  // Confirm Receipt Action
-  const handleConfirmReceipt = (nextUrl?: string) => {
-    setFeedbackError(null);
-    setFeedbackSuccess(null);
-
-    startTransition(async () => {
-      const sanitizedItems: ReviewItemInput[] = items.map((i) => ({
-        id: i.id,
-        rawName: i.rawName,
-        suggestedName: i.suggestedName,
-        suggestedCat: i.suggestedCat,
-        matchConfidence: i.matchConfidence,
-        mode: i.mode,
-        productId: i.productId,
-        newProductName: i.newProductName,
-        newProductCategory: i.newProductCategory,
-        newProductBaseUnit: i.newProductBaseUnit,
-        newProductIsStaple: i.newProductIsStaple,
-        quantity: Number(i.quantity) || 1,
-        unitPrice: Number(i.unitPrice) || 0,
-        totalPrice: Number(i.totalPrice) || 0,
-        baseUnit: i.baseUnit,
-        unitMeasure: Number(i.unitMeasure) || 1,
-        pricePerBaseUnit: Number(i.pricePerBaseUnit) || 0,
-        isDiscount: !!i.isDiscount,
-        excluded: !!i.excluded,
-        barcode: i.barcode || null,
-        nutrition: i.nutrition || null,
-      }));
-
-      const res = await confirmReceiptAction({
-        receiptId: receipt.id,
-        storeId,
-        purchaseDate,
-        totalAmount: Number(receiptTotal) || 0,
-        items: sanitizedItems,
-      });
-
-      if (res.success) {
-        if (nextUrl) {
-          router.push(nextUrl);
-        } else {
-          setStatus("CONFIRMED");
-          setFeedbackSuccess(
-            `Receipt confirmed successfully! Trained ${res.confirmedCount} product mappings.`
-          );
-          router.refresh();
-        }
-      } else {
-        setFeedbackError(res.error || "Failed to confirm receipt.");
-      }
-    });
-  };
-
-  // Enrich Receipt Item Names with AI Action
-  const handleEnrichWithAI = async () => {
-    setFeedbackError(null);
-    setFeedbackSuccess(null);
-    setIsEnrichingAI(true);
+    setCatalogResults((prev) => ({
+      ...prev,
+      [item.localKey]: { loading: true, result: null },
+    }));
 
     try {
-      const res = await enrichReceiptItemsWithAIAction(receipt.id);
-      if (!res.success) {
-        setFeedbackError(res.error || "AI item resolution failed.");
+      const res = await fetch(
+        `/api/catalog/lookup?q=${encodeURIComponent(
+          query.trim()
+        )}&store=${encodeURIComponent(currentStore.name)}`
+      );
+      if (!res.ok) {
+        setCatalogResults((prev) => ({
+          ...prev,
+          [item.localKey]: {
+            loading: false,
+            result: null,
+            error: "No pack match found in product directory.",
+          },
+        }));
+        return;
+      }
+      const data = await res.json();
+      if (!data?.result) {
+        setCatalogResults((prev) => ({
+          ...prev,
+          [item.localKey]: {
+            loading: false,
+            result: null,
+            error: "No pack size entry matched.",
+          },
+        }));
+        return;
+      }
+      setCatalogResults((prev) => ({
+        ...prev,
+        [item.localKey]: { loading: false, result: data.result },
+      }));
+    } catch {
+      setCatalogResults((prev) => ({
+        ...prev,
+        [item.localKey]: {
+          loading: false,
+          result: null,
+          error: "Could not look up pack size right now.",
+        },
+      }));
+    }
+  }
+
+  function handleApplyBarcodeFromModal(match: CatalogLookupResult) {
+    if (!searchModalKey) return;
+    updateItem(searchModalKey, (it) => {
+      const isLinked =
+        it.mode === "link_existing" && Boolean(it.matchedProductInfo);
+      const qty = Math.max(Number(it.quantity) || 1, 1);
+      const nextBaseUnit =
+        isLinked && it.matchedProductInfo
+          ? it.matchedProductInfo.baseUnit
+          : match.hasParsedQuantity !== false
+          ? match.baseUnit
+          : it.baseUnit;
+      const nextUnitMeasure =
+        match.hasParsedQuantity !== false && match.unitMeasurePerPack > 0
+          ? Number((qty * match.unitMeasurePerPack).toFixed(3))
+          : it.unitMeasure;
+      return recomputeItemMetrics({
+        ...it,
+        suggestedName: match.productName || it.suggestedName,
+        ...(isLinked
+          ? {}
+          : {
+              newProductName: match.productName || it.newProductName,
+              newProductBaseUnit: nextBaseUnit,
+            }),
+        baseUnit: nextBaseUnit,
+        unitMeasure: nextUnitMeasure,
+        isVariableWeight: false,
+        barcode: match.ean || match.nutrition?.ean || it.barcode || null,
+        nutrition: match.nutrition || it.nutrition || null,
+      });
+    });
+    setSearchModalKey(null);
+  }
+
+  async function handleBarcodeLookupForItem(localKey: string, ean: string) {
+    const targetItem = items.find((i) => i.localKey === localKey);
+    if (!targetItem) return;
+
+    setCatalogResults((prev) => ({
+      ...prev,
+      [localKey]: { loading: true, result: null },
+    }));
+
+    try {
+      const res = await fetch(
+        `/api/catalog/lookup?barcode=${encodeURIComponent(ean)}`
+      );
+      if (!res.ok) {
+        setCatalogResults((prev) => ({
+          ...prev,
+          [localKey]: {
+            loading: false,
+            result: null,
+            error: "Could not look up that barcode right now.",
+          },
+        }));
         return;
       }
 
-      if (res.nextReceiptAiProvider) {
-        setReceiptAiProvider(res.nextReceiptAiProvider);
+      const data = await res.json();
+      const offMatch = (data.offMatch as CatalogLookupResult | null) || null;
+      const qty = Math.max(Number(targetItem.quantity) || 1, 1);
+
+      if (data.localProduct) {
+        const lp = data.localProduct;
+        const measure =
+          offMatch &&
+          offMatch.hasParsedQuantity !== false &&
+          offMatch.unitMeasurePerPack > 0
+            ? Number((qty * offMatch.unitMeasurePerPack).toFixed(3))
+            : targetItem.unitMeasure;
+
+        updateItem(localKey, (prev) =>
+          recomputeItemMetrics({
+            ...prev,
+            mode: "link_existing",
+            productId: lp.id,
+            suggestedName: lp.displayName,
+            suggestedCat: lp.category,
+            matchConfidence: 1,
+            baseUnit: lp.baseUnit,
+            unitMeasure: measure,
+            matchedProductInfo: {
+              id: lp.id,
+              displayName: lp.displayName,
+              category: lp.category,
+              baseUnit: lp.baseUnit,
+              isStaple: Boolean(lp.isStaple),
+            },
+            barcode: ean,
+            nutrition: offMatch?.nutrition || null,
+          })
+        );
+        setCatalogResults((prev) => ({
+          ...prev,
+          [localKey]: { loading: false, result: offMatch },
+        }));
+      } else if (offMatch) {
+        setCatalogResults((prev) => ({
+          ...prev,
+          [localKey]: { loading: false, result: offMatch },
+        }));
+      } else {
+        setCatalogResults((prev) => ({
+          ...prev,
+          [localKey]: {
+            loading: false,
+            result: null,
+            error: `No product found for barcode ${ean}.`,
+          },
+        }));
+      }
+    } catch {
+      setCatalogResults((prev) => ({
+        ...prev,
+        [localKey]: {
+          loading: false,
+          result: null,
+          error: "Could not look up that barcode right now.",
+        },
+      }));
+    }
+  }
+
+  async function handleReopenReceipt() {
+    setIsReopening(true);
+    setActionBanner(null);
+    try {
+      const res = await reopenReceiptAction(receipt.id);
+      if (!res.success) {
+        setActionBanner({
+          tone: "error",
+          text: res.error || "Could not unlock receipt for editing.",
+        });
+        return;
+      }
+      setStatus("REVIEW");
+      setActionBanner({
+        tone: "success",
+        text: "Receipt unlocked. Make your edits and confirm when finished.",
+      });
+      router.refresh();
+    } catch {
+      setActionBanner({
+        tone: "error",
+        text: "Could not unlock receipt for editing.",
+      });
+    } finally {
+      setIsReopening(false);
+    }
+  }
+
+  async function handleEnrichWithAI() {
+    setIsEnriching(true);
+    setActionBanner(null);
+    try {
+      const res = await enrichReceiptItemsWithAIAction(receipt.id);
+      if (!res.success) {
+        setActionBanner({
+          tone: "error",
+          text: res.error || "Could not improve item names right now.",
+        });
+        return;
       }
 
-      if (res.updatedItems && res.updatedItems.length > 0) {
-        const patchMap = new Map(res.updatedItems.map((u) => [u.id, u]));
+      if (Array.isArray(res.updatedItems)) {
+        const patchMap = new Map(res.updatedItems.map((p) => [p.id, p]));
         setItems((prev) =>
-          prev.map((item) => {
-            const patch = item.id ? patchMap.get(item.id) : undefined;
-            if (!patch) return item;
-            const isLinked = Boolean(patch.productId && patch.product);
+          prev.map((it) => {
+            if (!it.id) return it;
+            const patch = patchMap.get(it.id);
+            if (!patch) return it;
             return {
-              ...item,
+              ...it,
               suggestedName: patch.suggestedName,
-              suggestedCat: patch.suggestedCat || undefined,
+              suggestedCat: patch.suggestedCat || it.suggestedCat,
               matchConfidence: patch.matchConfidence,
-              mode: isLinked ? "link_existing" : "create_new",
+              mode: patch.productId ? "link_existing" : "create_new",
               productId: patch.productId,
-              newProductName: isLinked ? undefined : patch.suggestedName,
-              newProductCategory: isLinked ? undefined : patch.suggestedCat || "Other",
-              newProductBaseUnit: isLinked ? undefined : patch.baseUnit,
+              newProductName:
+                patch.product?.displayName || patch.suggestedName,
+              newProductCategory:
+                patch.product?.category ||
+                patch.suggestedCat ||
+                it.suggestedCat ||
+                "Other",
+              newProductBaseUnit: patch.product?.baseUnit || patch.baseUnit,
+              newProductIsStaple: Boolean(patch.product?.isStaple),
               baseUnit: patch.baseUnit,
               unitMeasure: patch.unitMeasure,
               pricePerBaseUnit: patch.pricePerBaseUnit,
               excluded: patch.excluded,
-              matchedProductInfo: patch.product
-                ? {
-                    displayName: patch.product.displayName,
-                    category: patch.product.category,
-                    baseUnit: patch.product.baseUnit,
-                    isStaple: patch.product.isStaple,
-                  }
-                : undefined,
+              matchedProductInfo: patch.product || null,
             };
           })
         );
       }
 
-      setFeedbackSuccess(
-        res.message ||
-          `AI (${res.aiProvider}) resolved ${res.enrichedCount} ${
-            res.enrichedCount === 1 ? "item" : "items"
-          }.`
-      );
+      setActionBanner({
+        tone: "success",
+        text:
+          res.message ||
+          "Cleaned up item names and matched household staples.",
+      });
       router.refresh();
-    } catch (err) {
-      setFeedbackError(
-        err instanceof Error ? err.message : "AI item resolution failed."
-      );
+    } catch {
+      setActionBanner({
+        tone: "error",
+        text: "Could not clean up item names right now.",
+      });
     } finally {
-      setIsEnrichingAI(false);
+      setIsEnriching(false);
     }
-  };
+  }
 
-  // Reopen Receipt Action
-  const handleReopenReceipt = () => {
-    startTransition(async () => {
-      const res = await reopenReceiptAction(receipt.id);
-      if (res.success) {
-        setStatus("REVIEW");
-        setFeedbackSuccess("Receipt reopened for editing.");
+  async function handleConfirmReceipt(goToNextAfter: boolean) {
+    if (!parsedDateISO) {
+      setActionBanner({
+        tone: "error",
+        text: "Please enter a valid purchase date in DD/MM/YYYY format.",
+      });
+      return;
+    }
+
+    setIsConfirming(true);
+    setActionBanner(null);
+
+    try {
+      const serializedItems: ReviewItemInput[] = items.map((it) => ({
+        id: it.id,
+        rawName: it.rawName,
+        suggestedName:
+          it.matchedProductInfo?.displayName ||
+          it.newProductName ||
+          it.suggestedName ||
+          it.rawName,
+        suggestedCat: it.suggestedCat || "Other",
+        matchConfidence: it.matchConfidence,
+        mode: it.productId ? "link_existing" : "create_new",
+        productId: it.productId || null,
+        newProductName:
+          it.newProductName || it.suggestedName || it.rawName,
+        newProductCategory:
+          it.newProductCategory || it.suggestedCat || "Other",
+        newProductBaseUnit: it.newProductBaseUnit || it.baseUnit,
+        newProductIsStaple: Boolean(it.newProductIsStaple),
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        totalPrice: it.totalPrice,
+        baseUnit: it.baseUnit,
+        unitMeasure: it.unitMeasure,
+        pricePerBaseUnit: it.pricePerBaseUnit,
+        isVariableWeight: Boolean(it.isVariableWeight),
+        isDiscount: Boolean(it.isDiscount),
+        excluded: Boolean(it.excluded),
+        barcode: it.barcode || null,
+        nutrition: it.nutrition || null,
+      }));
+
+      const res = await confirmReceiptAction({
+        receiptId: receipt.id,
+        storeId,
+        purchaseDate: parsedDateISO,
+        totalAmount: parsedTotalAmount,
+        items: serializedItems,
+      });
+
+      if (!res.success) {
+        setActionBanner({
+          tone: "error",
+          text: res.error || "Could not save and confirm receipt.",
+        });
+        setIsConfirming(false);
+        return;
+      }
+
+      setStatus("CONFIRMED");
+      setItems((prev) => prev.map((it) => ({ ...it, isEditing: false })));
+      setActionBanner({
+        tone: "success",
+        text: "Receipt confirmed and added to your household price tracker.",
+      });
+
+      if (goToNextAfter && nextPendingId) {
+        router.push(`/receipts/${nextPendingId}/review`);
+      } else {
         router.refresh();
-      } else {
-        setFeedbackError(res.error || "Failed to reopen receipt.");
       }
-    });
-  };
+    } catch {
+      setActionBanner({
+        tone: "error",
+        text: "Something went wrong while saving. Please try again.",
+      });
+    } finally {
+      setIsConfirming(false);
+    }
+  }
 
-  // Delete Receipt Action
-  const handleDeleteReceipt = () => {
-    startTransition(async () => {
+  async function handleDeleteReceipt() {
+    setIsDeleting(true);
+    try {
       const res = await deleteReceiptAction(receipt.id);
-      if (res.success) {
-        router.push("/my-receipts");
-      } else {
-        setFeedbackError(res.error || "Failed to delete receipt.");
+      if (!res.success) {
+        setActionBanner({
+          tone: "error",
+          text: res.error || "Could not delete this receipt.",
+        });
+        setIsDeleting(false);
+        return;
       }
-    });
-  };
+      router.push("/my-receipts");
+      router.refresh();
+    } catch {
+      setActionBanner({
+        tone: "error",
+        text: "Could not delete this receipt.",
+      });
+      setIsDeleting(false);
+    }
+  }
+
+  const activeModalItem = useMemo(
+    () => items.find((it) => it.localKey === searchModalKey) ?? null,
+    [items, searchModalKey]
+  );
 
   return (
-    <div className="space-y-6 pb-52 sm:pb-36">
-      {/* Search & Link Modal */}
-      <ProductSearchModal
-        isOpen={searchModalOpen}
-        onClose={() => {
-          setSearchModalOpen(false);
-          setSearchTargetIndex(null);
-        }}
-        onSelectProduct={handleSelectProduct}
-        onSwitchToCreateNew={handleSwitchToCreateNew}
-        onApplyBarcodeLookup={handleApplyBarcodeFromModal}
-        initialQuery={
-          searchTargetIndex !== null
-            ? items[searchTargetIndex]?.suggestedName ||
-              items[searchTargetIndex]?.rawName ||
-              ""
-            : ""
-        }
-      />
-
-      {/* Mobile Slide-Over Evidence Modal */}
-      {mobileEvidenceOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950/95 backdrop-blur-md lg:hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900">
-            <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-emerald-400" />
-              <span className="text-sm font-bold text-white">Original Receipt</span>
-            </div>
-            <button
-              onClick={() => setMobileEvidenceOpen(false)}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-              aria-label="Close original receipt view"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="flex-1 p-2 overflow-hidden">
-            <ReceiptViewer
-              receiptId={receipt.id}
-              sourceFile={receipt.sourceFile}
-              hasOriginalPdf={receipt.hasOriginalPdf}
-              fileVersion={receipt.fileVersion}
-              isDigitalDia={receipt.isDigitalDia}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-sm rounded-2xl border border-rose-500/30 bg-zinc-900 p-5 shadow-2xl space-y-4">
-            <div className="flex items-center gap-3 text-rose-400">
-              <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
-                <Trash2 className="w-5 h-5" />
-              </div>
-              <h3 className="font-bold text-base text-white">Delete Receipt?</h3>
-            </div>
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              This will permanently remove this receipt, its scanned image, and all parsed line items. Confirmed products already in the catalogue will not be deleted.
-            </p>
-            <div className="flex items-center justify-end gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowDeleteConfirm(false)}
-                className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteReceipt}
-                disabled={isPending}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors flex items-center gap-1.5"
-              >
-                {isPending ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="w-3.5 h-3.5" />
-                )}
-                <span>Delete Permanently</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Status & Feedback Alert Banners */}
-      {feedbackSuccess && (
-        <div className="p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs flex items-center gap-3 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-          <span className="flex-1 font-medium">{feedbackSuccess}</span>
-          <button
-            onClick={() => setFeedbackSuccess(null)}
-            className="text-emerald-400 hover:text-emerald-200"
+    <div className="space-y-5">
+      {/* Top Receipt Header Card */}
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <span
+            className="w-11 h-11 rounded-xl flex items-center justify-center text-[14px] font-bold shrink-0"
+            style={{ backgroundColor: brand.color, color: brand.fg }}
           >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      {feedbackError && (
-        <div className="p-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs flex items-center gap-3">
-          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-          <span className="flex-1">{feedbackError}</span>
-          <button
-            onClick={() => setFeedbackError(null)}
-            className="text-rose-400 hover:text-rose-200"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
-      {status === "CONFIRMED" && (
-        <div className="p-5 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start sm:items-center gap-3.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 shrink-0">
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-sm font-bold text-white flex items-center gap-2">
-                <span>Receipt Confirmed & Integrated</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
-                  Active
-                </span>
-              </div>
-              <div className="text-xs text-zinc-400 mt-0.5">
-                All prices are now active in the grocery catalogue and store aliases have been trained.
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {nextPendingId && (
-              <Link
-                href={`/receipts/${nextPendingId}/review`}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs whitespace-nowrap shrink-0 transition-colors shadow-sm"
-              >
-                <span>Next in queue ({pendingReviewCount} remaining)</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            )}
-            <Link
-              href="/upload"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors"
-            >
-              <Upload className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Upload Another</span>
-            </Link>
-            <Link
-              href="/products"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors"
-            >
-              <span>View Catalogue</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
-            <button
-              onClick={handleReopenReceipt}
-              disabled={isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-amber-500/30 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Reopen to Edit</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Editable Header Metadata Bar */}
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 backdrop-blur-sm p-4 sm:p-5 shadow-lg space-y-4">
-        {/* Top row: Supermarket, Date, Total */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {/* Supermarket Selector */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-              <StoreIcon className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Supermarket</span>
-            </label>
-            <div className="relative">
-              <select
-                value={storeId}
-                onChange={(e) => setStoreId(e.target.value)}
-                disabled={status === "CONFIRMED" || isPending}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 appearance-none disabled:opacity-60 cursor-pointer"
-              >
-                {stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-zinc-400">
-                <ChevronDown className="w-4 h-4" />
-              </div>
-            </div>
-          </div>
-
-          {/* Purchase Date */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Purchase Date</span>
-            </label>
-            <input
-              type="date"
-              value={purchaseDate}
-              onChange={(e) => setPurchaseDate(e.target.value)}
-              disabled={status === "CONFIRMED" || isPending}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-sm font-mono text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 disabled:opacity-60"
-            />
-          </div>
-
-          {/* Printed Total */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-              <Scale className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Printed Receipt Total</span>
-            </label>
-            <div className="relative">
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={receiptTotal}
-                onChange={(e) => setReceiptTotal(parseFloat(e.target.value) || 0)}
-                disabled={status === "CONFIRMED" || isPending}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-3.5 pr-8 py-2 text-sm font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 disabled:opacity-60 tabular-nums"
-              />
-              <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none font-mono text-zinc-400 text-sm">
-                €
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom row: Telemetry Pills & Mobile View Toggle */}
-        <div className="pt-3 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2 font-mono">
-            {/* Status Pill */}
-            <span
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border ${
-                status === "CONFIRMED"
-                  ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
-                  : "bg-amber-500/10 text-amber-300 border-amber-500/20"
-              }`}
-            >
-              {status === "CONFIRMED" ? "CONFIRMED" : "PENDING REVIEW"}
-            </span>
-
-            {/* AI Provider Pill */}
-            <span className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-300 border border-zinc-700/60 flex items-center gap-1.5 text-[11px]">
-              <Sparkles className="w-3 h-3 text-emerald-400" />
+            {brand.monogram}
+          </span>
+          <div className="min-w-0 space-y-0.5">
+            <h1 className="font-display font-bold text-[24px] sm:text-[28px] leading-tight text-[var(--text-primary)] truncate">
+              {currentStore.name} receipt
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[13px] text-[var(--text-muted)] tabular-nums">
+              <span>{parsedDateISO ? formatDate(parsedDateISO) : dateInput}</span>
+              <span aria-hidden="true">·</span>
+              <span className="font-semibold text-[var(--text-primary)]">
+                {formatCurrency(parsedTotalAmount)}
+              </span>
+              <span aria-hidden="true">·</span>
               <span>
-                {receiptAiProvider === "dia-pos"
-                  ? "Source: Club Dia"
-                  : receiptAiProvider?.startsWith("dia-pos+")
-                  ? `Club Dia + ${receiptAiProvider.slice("dia-pos+".length)}`
-                  : `AI: ${receiptAiProvider || "AI Vision"}`}
+                {activeItems.length}{" "}
+                {activeItems.length === 1 ? "item" : "items"}
               </span>
-            </span>
-
-            {/* Latency Pill */}
-            {receipt.processingMs ? (
-              <span className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700/60 flex items-center gap-1 text-[11px]">
-                <Clock className="w-3 h-3 text-zinc-500" />
-                <span>{receipt.processingMs}ms</span>
-              </span>
-            ) : null}
-
-            {/* Store Brand Badge */}
-            <span
-              className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-white shadow-sm flex items-center gap-1.5"
-              style={{ backgroundColor: currentStore.brandHex }}
-            >
-              <span>{currentStore.name}</span>
-            </span>
+              <span aria-hidden="true">·</span>
+              {status === "CONFIRMED" ? (
+                <span className="inline-flex items-center gap-1 text-[var(--positive)] font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Confirmed
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[var(--accent)] font-medium">
+                  Needs review
+                </span>
+              )}
+            </div>
           </div>
+        </div>
 
-          {/* Mobile View Original Receipt Button (< lg) */}
-          <div className="block lg:hidden w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowMobileViewer(true)}
+            className="lg:hidden h-9 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Eye className="w-4 h-4 text-[var(--text-muted)]" />
+            Show original receipt
+          </button>
+
+          {isEditable ? (
             <button
               type="button"
-              onClick={() => setMobileEvidenceOpen(true)}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-colors"
+              disabled={isEnriching}
+              onClick={handleEnrichWithAI}
+              className="h-9 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
             >
-              <Eye className="w-4 h-4" />
-              <span>View Original Receipt</span>
+              {isEnriching ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--primary)]" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 text-[var(--primary)]" />
+              )}
+              Improve item names
             </button>
-          </div>
+          ) : (
+            <button
+              type="button"
+              disabled={isReopening}
+              onClick={handleReopenReceipt}
+              className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+            >
+              {isReopening ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Pencil className="w-3.5 h-3.5" />
+              )}
+              Edit receipt
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowDeleteConfirm((prev) => !prev)}
+            className="h-9 px-3.5 rounded-full text-[13px] font-medium text-[var(--negative)] hover:bg-[var(--negative-tint)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete
+          </button>
         </div>
       </div>
 
-      {/* Main Split-Screen Workstation */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Left Sticky Column: Interactive Original Receipt Viewer (lg:col-span-5) */}
-        <div className="hidden lg:block lg:col-span-5 sticky top-24 space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h2 className="text-xs font-bold uppercase font-mono tracking-wider text-zinc-400 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-emerald-400" />
-              <span>Original Receipt Document</span>
-            </h2>
-            <a
-              href={`/api/receipts/${receipt.id}/file`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] font-mono text-emerald-400 hover:underline flex items-center gap-1"
+      {/* Inline Delete Confirmation */}
+      {showDeleteConfirm && (
+        <div className="rounded-2xl border border-[var(--negative)]/30 bg-[var(--negative-tint)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <p className="text-[14px] text-[var(--text-primary)]">
+            Delete this {currentStore.name} receipt and remove all prices from
+            your tracker?
+          </p>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={handleDeleteReceipt}
+              className="h-9 px-4 rounded-full bg-[var(--negative)] text-[var(--negative-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              <span>Open raw</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-
-          <div className="h-[75vh] w-full">
-            <ReceiptViewer
-              receiptId={receipt.id}
-              sourceFile={receipt.sourceFile}
-              hasOriginalPdf={receipt.hasOriginalPdf}
-              fileVersion={receipt.fileVersion}
-              isDigitalDia={receipt.isDigitalDia}
-            />
+              {isDeleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Yes, delete receipt
+            </button>
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={() => setShowDeleteConfirm(false)}
+              className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Cancel
+            </button>
           </div>
         </div>
+      )}
 
-        {/* Right Column: 3-Tier Grouped Checklist & Action Workstation (lg:col-span-7) */}
-        <div className="lg:col-span-7 space-y-6">
-          {/* Action Toolbar above items */}
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-            <div className="flex items-center gap-3">
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Receipt Line Items</span>
-                <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-mono text-xs">
-                  {items.length} total
-                </span>
-              </h2>
+      {/* Action Feedback Banner */}
+      {actionBanner && (
+        <div
+          role={actionBanner.tone === "error" ? "alert" : "status"}
+          className={`rounded-2xl border px-4 py-3 flex items-center gap-2.5 text-[13px] ${
+            actionBanner.tone === "error"
+              ? "border-[var(--negative)]/30 bg-[var(--negative-tint)] text-[var(--negative)]"
+              : "border-[var(--positive)]/30 bg-[var(--positive-tint)] text-[var(--positive)]"
+          }`}
+        >
+          {actionBanner.tone === "error" ? (
+            <AlertCircle className="w-4 h-4 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          )}
+          <span>{actionBanner.text}</span>
+        </div>
+      )}
+
+      {/* Main Split Workstation */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Desktop Sticky Receipt Viewer */}
+        <div className="hidden lg:block lg:col-span-5 lg:sticky lg:top-24">
+          <ReceiptViewer
+            receiptId={receipt.id}
+            sourceFile={receipt.sourceFile}
+            hasOriginalPdf={receipt.hasOriginalPdf}
+            fileVersion={receipt.fileVersion}
+            isDigitalDia={receipt.isDigitalDia}
+          />
+        </div>
+
+        {/* Checklist & Editor Column */}
+        <div className="lg:col-span-7 space-y-5">
+          {/* Receipt Store / Date / Total Edit Fields */}
+          {isEditable && (
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <label
+                  htmlFor="review-store"
+                  className="block text-[13px] font-medium text-[var(--text-muted)]"
+                >
+                  Supermarket
+                </label>
+                <select
+                  id="review-store"
+                  value={storeId}
+                  onChange={(e) => setStoreId(e.target.value)}
+                  className="w-full h-10 px-3 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
+                >
+                  {stores.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="review-date"
+                  className="block text-[13px] font-medium text-[var(--text-muted)]"
+                >
+                  Purchase date
+                </label>
+                <input
+                  id="review-date"
+                  type="text"
+                  inputMode="numeric"
+                  value={dateInput}
+                  onChange={(e) => setDateInput(e.target.value)}
+                  placeholder="DD/MM/YYYY"
+                  className={`w-full h-10 px-3 rounded-xl bg-[var(--bg-page)] border text-[14px] tabular-nums text-[var(--text-primary)] focus:outline-none ${
+                    !parsedDateISO
+                      ? "border-[var(--negative)]"
+                      : "border-[var(--border)] focus:border-[var(--primary)]"
+                  }`}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="review-total"
+                  className="block text-[13px] font-medium text-[var(--text-muted)]"
+                >
+                  Total paid (€)
+                </label>
+                <input
+                  id="review-total"
+                  type="number"
+                  step="0.01"
+                  value={totalAmountInput}
+                  onChange={(e) => setTotalAmountInput(e.target.value)}
+                  className="w-full h-10 px-3 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] tabular-nums text-[var(--text-primary)] focus:outline-none"
+                />
+              </div>
             </div>
+          )}
 
-            {status !== "CONFIRMED" && (
-              <div className="flex items-center gap-2">
-                {pendingItems.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleEnrichWithAI}
-                    disabled={isEnrichingAI || isPending}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold whitespace-nowrap shrink-0 disabled:opacity-50 transition-colors"
-                  >
-                    <Sparkles className={`w-3.5 h-3.5 ${isEnrichingAI ? "animate-spin" : ""}`} />
-                    <span>{isEnrichingAI ? "Resolving..." : "AI Resolve Names"}</span>
-                  </button>
-                )}
+          {/* Compact 1-Line Status Strip (Replaces Empty Yellow Box) */}
+          {pendingItems.length > 0 && isEditable ? (
+            <div className="rounded-xl border border-[var(--accent)]/35 bg-[var(--accent-tint)] px-4 py-2.5 flex items-center justify-between gap-2 text-[13px] text-[var(--text-primary)]">
+              <span className="font-medium">
+                {pendingItems.length}{" "}
+                {pendingItems.length === 1 ? "item needs" : "items need"} a quick
+                check ({matchedItems.length} already matched)
+              </span>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-[var(--positive)]/30 bg-[var(--positive-tint)] px-4 py-2.5 flex items-center gap-2 text-[13px] text-[var(--positive)] font-medium">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>
+                All {activeItems.length}{" "}
+                {activeItems.length === 1 ? "item" : "items"} matched and priced
+              </span>
+            </div>
+          )}
+
+          {/* Items Checklist */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <h2 className="font-display font-semibold text-[18px] text-[var(--text-primary)]">
+                Receipt items
+              </h2>
+              {isEditable && (
                 <button
                   type="button"
-                  onClick={addManualLine}
-                  disabled={isEnrichingAI || isPending}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 hover:bg-zinc-800 hover:border-emerald-500/50 text-zinc-200 text-xs font-semibold whitespace-nowrap shrink-0 disabled:opacity-50 transition-colors"
+                  onClick={handleAddEmptyItem}
+                  className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Add Line Item</span>
+                  <Plus className="w-4 h-4" />
+                  Add item
                 </button>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          {/* TIER 1: ⚠️ Pending Review / New Aliases */}
-          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 overflow-hidden transition-all shadow-sm">
-            <button
-              type="button"
-              onClick={() => setPendingExpanded((prev) => !prev)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-amber-500/10 hover:bg-amber-500/15 text-amber-300 text-xs font-bold font-mono transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-400" />
-                <span>PENDING REVIEW / REQUIRES ATTENTION</span>
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200 text-[11px]">
-                  {pendingItems.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-amber-400/80 font-normal">
-                  {pendingExpanded ? "Collapse" : "Expand"}
-                </span>
-                {pendingExpanded ? (
-                  <ChevronUp className="w-4 h-4" />
-                ) : (
-                  <ChevronDown className="w-4 h-4" />
+            {activeItems.length === 0 ? (
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] px-5 py-10 text-center space-y-2">
+                <p className="text-[14px] font-medium text-[var(--text-primary)]">
+                  No active items on this receipt
+                </p>
+                {isEditable && (
+                  <button
+                    type="button"
+                    onClick={handleAddEmptyItem}
+                    className="h-9 px-4 rounded-full bg-[var(--primary)] text-[var(--primary-on)] text-[13px] font-semibold cursor-pointer"
+                  >
+                    Add first item
+                  </button>
                 )}
               </div>
-            </button>
+            ) : (
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] divide-y divide-[var(--border)] overflow-hidden">
+                {[...pendingItems, ...matchedItems].map((item) => {
+                  const needsCheck =
+                    !item.productId && item.matchConfidence < 0.72;
+                  const resolvedTitle =
+                    item.matchedProductInfo?.displayName ||
+                    item.newProductName ||
+                    item.suggestedName ||
+                    item.rawName;
+                  const resolvedCategory =
+                    item.matchedProductInfo?.category ||
+                    item.newProductCategory ||
+                    item.suggestedCat ||
+                    "Other";
+                  const resolvedStaple =
+                    item.matchedProductInfo?.isStaple ??
+                    Boolean(item.newProductIsStaple);
+                  const lookupState = catalogResults[item.localKey];
 
-            {pendingExpanded && (
-              <div className="p-3.5 space-y-3">
-                {pendingItems.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-zinc-400 font-mono">
-                    All items recognized or categorized! Nothing pending review.
-                  </div>
-                ) : (
-                  pendingItems.map(({ item, index }) => (
-                    <ItemCard
-                      key={item.id || `item-${index}`}
-                      item={item}
-                      index={index}
-                      isPendingTier
-                      readOnly={status === "CONFIRMED"}
-                      storeName={currentStore.name}
-                      onUpdateItem={updateItem}
-                      onToggleExcluded={() => toggleItemExcluded(index)}
-                      onRemoveItem={() => removeItem(index)}
-                      onOpenSearch={() => openSearchModal(index)}
-                    />
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* TIER 2: ✅ Auto-Recognized (100% Match) */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden transition-all shadow-sm">
-            <button
-              type="button"
-              onClick={() => setMatchedExpanded((prev) => !prev)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-zinc-900 hover:bg-zinc-800/80 text-emerald-400 text-xs font-bold font-mono transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>AUTOMATICALLY RECOGNIZED</span>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px]">
-                  {autoMatchedItems.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-400 font-normal">
-                  {matchedExpanded ? "Collapse" : "Expand"}
-                </span>
-                {matchedExpanded ? (
-                  <ChevronUp className="w-4 h-4" />
-                ) : (
-                  <ChevronDown className="w-4 h-4" />
-                )}
-              </div>
-            </button>
-
-            {matchedExpanded && (
-              <div className="p-3.5 space-y-2.5">
-                {autoMatchedItems.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-zinc-500 font-mono">
-                    No items automatically matched at 100% yet. Confirm items above to train aliases!
-                  </div>
-                ) : (
-                  autoMatchedItems.map(({ item, index }) => (
-                    <ItemCard
-                      key={item.id || `item-${index}`}
-                      item={item}
-                      index={index}
-                      readOnly={status === "CONFIRMED"}
-                      storeName={currentStore.name}
-                      onUpdateItem={updateItem}
-                      onToggleExcluded={() => toggleItemExcluded(index)}
-                      onRemoveItem={() => removeItem(index)}
-                      onOpenSearch={() => openSearchModal(index)}
-                    />
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* TIER 3: 🚫 Discounts, Bags & Excluded */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/60 overflow-hidden transition-all">
-            <button
-              type="button"
-              onClick={() => setExcludedExpanded((prev) => !prev)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-zinc-900/40 hover:bg-zinc-900 text-zinc-400 text-xs font-bold font-mono transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <Tag className="w-4 h-4 text-zinc-500" />
-                <span>DISCOUNTS, BAGS & EXCLUDED ITEMS</span>
-                <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 text-[11px]">
-                  {excludedItems.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-500 font-normal">
-                  {excludedExpanded ? "Hide" : "Show"}
-                </span>
-                {excludedExpanded ? (
-                  <ChevronUp className="w-4 h-4" />
-                ) : (
-                  <ChevronDown className="w-4 h-4" />
-                )}
-              </div>
-            </button>
-
-            {excludedExpanded && (
-              <div className="p-3.5 space-y-2.5">
-                {excludedItems.length === 0 ? (
-                  <div className="text-center py-4 text-xs text-zinc-600 font-mono">
-                    No excluded items or discounts in this receipt.
-                  </div>
-                ) : (
-                  excludedItems.map(({ item, index }) => (
+                  return (
                     <div
-                      key={item.id || `item-${index}`}
-                      className="p-3 rounded-xl border border-zinc-800/80 bg-zinc-900/40 flex items-center justify-between gap-3 text-xs text-zinc-400"
+                      key={item.localKey}
+                      className={
+                        needsCheck && isEditable
+                          ? "border-l-[3px] border-l-[var(--accent)]"
+                          : ""
+                      }
                     >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2 font-medium text-zinc-300">
-                          <span>{item.suggestedName || item.rawName}</span>
-                          {item.isDiscount ? (
-                            <span className="px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-400 text-[10px] font-mono border border-rose-500/20">
-                              Discount
+                      <div className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="min-w-0 space-y-1 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                            {resolvedStaple && (
+                              <Star
+                                className="w-3.5 h-3.5 text-[var(--accent)] fill-current shrink-0"
+                                aria-label="Household staple"
+                              />
+                            )}
+                            <span className="font-semibold text-[15px] text-[var(--text-primary)] truncate">
+                              {resolvedTitle}
                             </span>
-                          ) : (
-                            <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-500 text-[10px] font-mono">
-                              Excluded
+                            <span className="text-[13px] text-[var(--text-muted)]">
+                              · {resolvedCategory}
                             </span>
-                          )}
+                          </div>
+
+                          <div className="text-[13px] text-[var(--text-muted)] tabular-nums truncate">
+                            {item.rawName !== resolvedTitle
+                              ? `${item.rawName} · `
+                              : ""}
+                            {formatLineMeasure(
+                              item.unitMeasure,
+                              item.quantity,
+                              item.baseUnit
+                            )}
+                            {" · "}
+                            {formatUnitPrice(
+                              item.pricePerBaseUnit,
+                              item.baseUnit
+                            )}
+                          </div>
                         </div>
-                        <div className="font-mono text-[11px] text-zinc-500">
-                          POS: &quot;{item.rawName}&quot;
+
+                        <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                          <span className="font-semibold text-[15px] tabular-nums text-[var(--text-primary)]">
+                            {formatCurrency(item.totalPrice)}
+                          </span>
+
+                          {isEditable && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setSearchModalKey(item.localKey)}
+                                title="Match to another pantry product"
+                                className="h-8 px-2.5 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                <Search className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                                Match
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateItem(item.localKey, (prev) => ({
+                                    ...prev,
+                                    isEditing: !prev.isEditing,
+                                  }))
+                                }
+                                className={`h-8 px-2.5 rounded-full border text-[13px] font-medium inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer ${
+                                  item.isEditing
+                                    ? "border-[var(--primary)] bg-[var(--primary-tint)] text-[var(--primary)]"
+                                    : "border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                                }`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                {item.isEditing ? "Done" : "Edit"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateItem(item.localKey, (prev) => ({
+                                    ...prev,
+                                    excluded: true,
+                                    isEditing: false,
+                                  }))
+                                }
+                                title="Exclude from grocery prices"
+                                aria-label={`Exclude ${resolvedTitle}`}
+                                className="w-8 h-8 rounded-full hover:bg-[var(--bg-subtle)] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--negative)] cursor-pointer"
+                              >
+                                <EyeOff className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
-                        <div className="text-right font-mono font-bold text-zinc-300 tabular-nums">
-                          {item.isDiscount ? "-" : ""}€
-                          {Math.abs(item.totalPrice).toFixed(2)}
+                      {/* Inline Row Editor */}
+                      {isEditable && item.isEditing && (
+                        <div className="px-4 py-4 bg-[var(--bg-subtle)]/70 border-t border-[var(--border)] space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="block text-[13px] font-medium text-[var(--text-muted)]">
+                                {item.productId
+                                  ? "Matched product"
+                                  : "Product name"}
+                              </label>
+                              {item.productId ? (
+                                <div className="h-10 px-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] flex items-center justify-between gap-2 text-[14px]">
+                                  <span className="truncate font-medium text-[var(--text-primary)]">
+                                    {item.matchedProductInfo?.displayName ||
+                                      item.suggestedName}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleSwitchToCreateNew(item.localKey)
+                                    }
+                                    className="text-[13px] font-medium text-[var(--primary)] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+                                  >
+                                    New instead
+                                  </button>
+                                </div>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={
+                                    item.newProductName ?? item.suggestedName
+                                  }
+                                  onChange={(e) =>
+                                    updateItem(item.localKey, (prev) => ({
+                                      ...prev,
+                                      newProductName: e.target.value,
+                                      suggestedName: e.target.value,
+                                    }))
+                                  }
+                                  className="w-full h-10 px-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none"
+                                />
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[13px] font-medium text-[var(--text-muted)]">
+                                Category
+                              </label>
+                              <select
+                                disabled={Boolean(item.productId)}
+                                value={
+                                  item.newProductCategory ||
+                                  item.suggestedCat ||
+                                  "Other"
+                                }
+                                onChange={(e) =>
+                                  updateItem(item.localKey, (prev) => ({
+                                    ...prev,
+                                    newProductCategory: e.target.value,
+                                    suggestedCat: e.target.value,
+                                  }))
+                                }
+                                className="w-full h-10 px-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none disabled:opacity-60"
+                              >
+                                {CANONICAL_CATEGORIES.map((cat) => (
+                                  <option key={cat} value={cat}>
+                                    {cat}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div className="space-y-1">
+                              <label className="block text-[13px] font-medium text-[var(--text-muted)]">
+                                Quantity
+                              </label>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.01"
+                                value={item.quantity}
+                                onChange={(e) => {
+                                  const qty =
+                                    parseFloat(e.target.value) || 0;
+                                  updateItem(item.localKey, (prev) =>
+                                    recomputeItemMetrics({
+                                      ...prev,
+                                      quantity: qty > 0 ? qty : 1,
+                                    })
+                                  );
+                                }}
+                                className="w-full h-10 px-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] tabular-nums text-[var(--text-primary)] focus:outline-none"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[13px] font-medium text-[var(--text-muted)]">
+                                Total size ({normalizeUnit(item.baseUnit)})
+                              </label>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                value={item.unitMeasure}
+                                onChange={(e) => {
+                                  const measure =
+                                    parseFloat(e.target.value) || 0;
+                                  updateItem(item.localKey, (prev) =>
+                                    recomputeItemMetrics({
+                                      ...prev,
+                                      unitMeasure: measure > 0 ? measure : 1,
+                                    })
+                                  );
+                                }}
+                                className="w-full h-10 px-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] tabular-nums text-[var(--text-primary)] focus:outline-none"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[13px] font-medium text-[var(--text-muted)]">
+                                Tracked unit
+                              </label>
+                              <select
+                                disabled={Boolean(item.productId)}
+                                value={item.baseUnit}
+                                onChange={(e) => {
+                                  const bu = e.target.value as
+                                    | "KG"
+                                    | "L"
+                                    | "UNIT";
+                                  updateItem(item.localKey, (prev) =>
+                                    recomputeItemMetrics({
+                                      ...prev,
+                                      baseUnit: bu,
+                                      newProductBaseUnit: bu,
+                                    })
+                                  );
+                                }}
+                                className="w-full h-10 px-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] focus:outline-none disabled:opacity-60"
+                              >
+                                <option value="KG">Per kg</option>
+                                <option value="L">Per L</option>
+                                <option value="UNIT">Per unit</option>
+                              </select>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[13px] font-medium text-[var(--text-muted)]">
+                                Line total (€)
+                              </label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.totalPrice}
+                                onChange={(e) => {
+                                  const total =
+                                    parseFloat(e.target.value) || 0;
+                                  updateItem(item.localKey, (prev) =>
+                                    recomputeItemMetrics({
+                                      ...prev,
+                                      totalPrice: total,
+                                    })
+                                  );
+                                }}
+                                className="w-full h-10 px-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] tabular-nums text-[var(--text-primary)] focus:outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                            {!item.productId ? (
+                              <label className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--text-primary)] cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(item.newProductIsStaple)}
+                                  onChange={(e) =>
+                                    updateItem(item.localKey, (prev) => ({
+                                      ...prev,
+                                      newProductIsStaple: e.target.checked,
+                                    }))
+                                  }
+                                  className="w-4 h-4 rounded accent-[var(--primary)]"
+                                />
+                                Mark as household staple
+                              </label>
+                            ) : (
+                              <span className="text-[13px] text-[var(--text-muted)]">
+                                Unit price updates automatically:{" "}
+                                <strong className="text-[var(--text-primary)] tabular-nums">
+                                  {formatUnitPrice(
+                                    item.pricePerBaseUnit,
+                                    item.baseUnit
+                                  )}
+                                </strong>
+                              </span>
+                            )}
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleCatalogLookup(item)}
+                                disabled={lookupState?.loading}
+                                className="h-8 px-3 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                {lookupState?.loading ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Wand2 className="w-3.5 h-3.5 text-[var(--primary)]" />
+                                )}
+                                Look up pack size
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setBarcodeTargetKey(item.localKey)
+                                }
+                                disabled={lookupState?.loading}
+                                title="Secondary barcode / EAN lookup"
+                                aria-label="Scan barcode for item"
+                                className="w-8 h-8 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--primary)] inline-flex items-center justify-center shrink-0 cursor-pointer"
+                              >
+                                <ScanBarcode className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {lookupState?.error && (
+                            <p className="text-[13px] text-[var(--text-muted)]">
+                              {lookupState.error}
+                            </p>
+                          )}
+
+                          {lookupState?.result && (
+                            <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-3 flex flex-wrap items-center justify-between gap-3 text-[13px]">
+                              <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+                                <span className="font-medium text-[var(--text-primary)]">
+                                  {lookupState.result.productName}
+                                </span>
+                                <span className="text-[var(--text-muted)]">
+                                  ·{" "}
+                                  {lookupState.result.brand
+                                    ? `${lookupState.result.brand} · `
+                                    : ""}
+                                  {lookupState.result.rawQuantityText ||
+                                    "Unknown size"}
+                                  {lookupState.result.unitMeasurePerPack > 0
+                                    ? ` (${lookupState.result.unitMeasurePerPack} ${normalizeUnit(lookupState.result.baseUnit)})`
+                                    : ""}
+                                </span>
+                                {(() => {
+                                  const ns = getNutriScoreBadgeStyle(
+                                    lookupState.result.nutrition?.nutriScore
+                                  );
+                                  return ns ? (
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full border text-[13px] leading-none font-semibold ${ns.className}`}
+                                    >
+                                      NS {ns.letter}
+                                    </span>
+                                  ) : null;
+                                })()}
+                                {(() => {
+                                  const nova = getNovaGroupMeta(
+                                    lookupState.result.nutrition?.novaGroup
+                                  );
+                                  return nova ? (
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full border text-[13px] leading-none font-semibold ${nova.className}`}
+                                    >
+                                      {nova.shortLabel}
+                                    </span>
+                                  ) : null;
+                                })()}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const match = lookupState.result!;
+                                  updateItem(item.localKey, (prev) => {
+                                    const isLinked =
+                                      prev.mode === "link_existing";
+                                    const effectiveUnit = isLinked
+                                      ? prev.baseUnit
+                                      : match.hasParsedQuantity !== false
+                                        ? match.baseUnit
+                                        : prev.baseUnit;
+                                    const newUnitMeasure =
+                                      match.hasParsedQuantity !== false &&
+                                      match.unitMeasurePerPack > 0
+                                        ? Number(
+                                            (
+                                              match.unitMeasurePerPack *
+                                              (prev.quantity > 0
+                                                ? prev.quantity
+                                                : 1)
+                                            ).toFixed(3)
+                                          )
+                                        : prev.unitMeasure;
+                                    return recomputeItemMetrics({
+                                      ...prev,
+                                      ...(!isLinked &&
+                                      match.ean &&
+                                      match.productName
+                                        ? {
+                                            newProductName: match.productName,
+                                            suggestedName: match.productName,
+                                          }
+                                        : {}),
+                                      baseUnit: effectiveUnit,
+                                      newProductBaseUnit: isLinked
+                                        ? prev.newProductBaseUnit
+                                        : effectiveUnit,
+                                      unitMeasure: newUnitMeasure,
+                                      barcode:
+                                        match.ean ||
+                                        match.nutrition?.ean ||
+                                        prev.barcode ||
+                                        null,
+                                      nutrition:
+                                        match.nutrition ||
+                                        prev.nutrition ||
+                                        null,
+                                    });
+                                  });
+                                }}
+                                className="h-7 px-3 rounded-full bg-[var(--primary)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                Apply size
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        {status !== "CONFIRMED" && (
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Collapsible Discounts & Excluded Bags */}
+          {discountAndExcludedItems.length > 0 && (
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowDiscountsSection((prev) => !prev)}
+                aria-expanded={showDiscountsSection}
+                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
+              >
+                <span className="text-[14px] font-medium text-[var(--text-primary)]">
+                  Discounts and bags ({discountAndExcludedItems.length})
+                </span>
+                <ChevronDown
+                  className={`w-4 h-4 text-[var(--text-muted)] transition-transform ${
+                    showDiscountsSection ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              {showDiscountsSection && (
+                <div className="border-t border-[var(--border)] divide-y divide-[var(--border)]">
+                  {discountAndExcludedItems.map((item) => (
+                    <div
+                      key={item.localKey}
+                      className="px-4 py-2.5 flex items-center justify-between gap-3 text-[13px]"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium text-[var(--text-primary)] truncate">
+                          {item.suggestedName || item.rawName}
+                        </div>
+                        <div className="text-[var(--text-muted)]">
+                          {item.isDiscount ? "Store discount" : "Excluded item"}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span
+                          className={`tabular-nums font-medium ${
+                            item.totalPrice < 0
+                              ? "text-[var(--positive)]"
+                              : "text-[var(--text-muted)]"
+                          }`}
+                        >
+                          {formatCurrency(item.totalPrice)}
+                        </span>
+
+                        {isEditable && item.excluded && !item.isDiscount && (
                           <button
                             type="button"
-                            onClick={() => toggleItemExcluded(index)}
-                            className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-semibold transition-colors"
+                            onClick={() =>
+                              updateItem(item.localKey, (prev) => ({
+                                ...prev,
+                                excluded: false,
+                              }))
+                            }
+                            title="Restore item"
+                            className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--primary)] hover:underline cursor-pointer"
                           >
+                            <RotateCcw className="w-3.5 h-3.5" />
                             Restore
                           </button>
                         )}
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* RECEIPT TAX BREAKDOWN */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-xs font-bold font-mono text-zinc-200 uppercase tracking-wider">
-                  Receipt Tax Breakdown
-                </h3>
-              </div>
-              {receipt.taxBreakdown && receipt.taxBreakdown.length > 0 && (
-                <span className="text-[11px] font-mono text-zinc-400">
-                  Fiscal breakdown printed on receipt
-                </span>
+                  ))}
+                </div>
               )}
             </div>
+          )}
 
-            {receipt.taxBreakdown && receipt.taxBreakdown.length > 0 ? (
-              <div className="space-y-2">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs font-mono text-left">
-                    <thead>
-                      <tr className="border-b border-zinc-800 text-zinc-400 text-[11px]">
-                        <th className="py-1.5 px-2 font-medium">Tax Rate</th>
-                        <th className="py-1.5 px-2 font-medium text-right">Tax Base</th>
-                        <th className="py-1.5 px-2 font-medium text-right">Tax Amount</th>
-                        <th className="py-1.5 px-2 font-medium text-right">Subtotal</th>
+          {/* Spanish VAT Tax Breakdown */}
+          {receipt.taxBreakdown && receipt.taxBreakdown.length > 0 && (
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+              <div className="px-4 py-3 border-b border-[var(--border)]">
+                <h2 className="font-display font-semibold text-[16px] text-[var(--text-primary)]">
+                  Tax breakdown
+                </h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-[13px]">
+                  <thead>
+                    <tr className="border-b border-[var(--border)] text-[var(--text-muted)]">
+                      <th className="py-2.5 px-4 font-medium">VAT rate</th>
+                      <th className="py-2.5 px-4 font-medium text-right">
+                        Taxable base
+                      </th>
+                      <th className="py-2.5 px-4 font-medium text-right">
+                        VAT paid
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)] tabular-nums">
+                    {receipt.taxBreakdown.map((t, idx) => (
+                      <tr key={`${t.rate}-${idx}`}>
+                        <td className="py-2.5 px-4 font-medium text-[var(--text-primary)]">
+                          {t.rate}%
+                        </td>
+                        <td className="py-2.5 px-4 text-right text-[var(--text-muted)]">
+                          {formatCurrency(t.baseAmount)}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-semibold text-[var(--text-primary)]">
+                          {formatCurrency(t.taxAmount)}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
-                      {receipt.taxBreakdown.map((t, idx) => {
-                        const subtotal = Number(t.baseAmount) + Number(t.taxAmount);
-                        return (
-                          <tr key={idx} className="hover:bg-zinc-900/40">
-                            <td className="py-1.5 px-2 font-semibold text-emerald-400 whitespace-nowrap shrink-0">
-                              {t.rate}%
-                            </td>
-                            <td className="py-1.5 px-2 text-right tabular-nums whitespace-nowrap shrink-0">
-                              €{Number(t.baseAmount).toFixed(2)}
-                            </td>
-                            <td className="py-1.5 px-2 text-right tabular-nums whitespace-nowrap shrink-0">
-                              €{Number(t.taxAmount).toFixed(2)}
-                            </td>
-                            <td className="py-1.5 px-2 text-right tabular-nums font-medium text-white whitespace-nowrap shrink-0">
-                              €{subtotal.toFixed(2)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      {(() => {
-                        const totalBase = receipt.taxBreakdown.reduce((s, t) => s + Number(t.baseAmount), 0);
-                        const totalCuota = receipt.taxBreakdown.reduce((s, t) => s + Number(t.taxAmount), 0);
-                        const totalTaxed = totalBase + totalCuota;
-
-                        return (
-                          <tr className="border-t border-zinc-700/80 font-bold text-white bg-zinc-900/40">
-                            <td className="py-2 px-2 text-zinc-400 whitespace-nowrap shrink-0">Total Taxes</td>
-                            <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap shrink-0">€{totalBase.toFixed(2)}</td>
-                            <td className="py-2 px-2 text-right tabular-nums text-emerald-400 whitespace-nowrap shrink-0">€{totalCuota.toFixed(2)}</td>
-                            <td className="py-2 px-2 text-right tabular-nums text-white whitespace-nowrap shrink-0">
-                              €{totalTaxed.toFixed(2)}
-                            </td>
-                          </tr>
-                        );
-                      })()}
-                    </tfoot>
-                  </table>
-                </div>
-
-                {(() => {
-                  const totalBase = receipt.taxBreakdown.reduce((s, t) => s + Number(t.baseAmount), 0);
-                  const totalCuota = receipt.taxBreakdown.reduce((s, t) => s + Number(t.taxAmount), 0);
-                  const totalTaxed = totalBase + totalCuota;
-                  const delta = Math.abs(totalTaxed - Number(receiptTotal));
-                  const isMatched = delta <= 0.05;
-
-                  return (
-                    <div className="pt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
-                      <span className="text-zinc-400">
-                        Base (€{totalBase.toFixed(2)}) + Tax (€{totalCuota.toFixed(2)}) = €{totalTaxed.toFixed(2)}
-                      </span>
-                      {isMatched ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap shrink-0 font-medium">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Total Matches Receipt</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 whitespace-nowrap shrink-0 font-medium">
-                          <AlertCircle className="w-3 h-3" />
-                          <span>Difference from total: €{delta.toFixed(2)}</span>
-                        </span>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            ) : (
-              <div className="p-3 rounded-xl bg-zinc-900/30 border border-zinc-800/40 text-xs text-zinc-500 font-mono">
-                Tax breakdown not detected on receipt footer (common on digital or shortened tickets).
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Sticky Bottom "Math Sanity Bar" */}
-      <div className="fixed bottom-0 inset-x-0 z-50 bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800 px-3 sm:px-6 pt-3 pb-[max(0.875rem,env(safe-area-inset-bottom))] shadow-2xl">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4">
-          {/* Left: Active Count & Live Math Sanity */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs">
-            <span className="font-mono text-zinc-300 font-medium whitespace-nowrap">
-              <strong className="text-white font-bold">
-                {mathSanity.activeCount}
-              </strong>{" "}
-              active items
-            </span>
-
-            <span className="hidden sm:inline text-zinc-700">•</span>
-
-            <div className="font-mono text-xs flex items-center gap-2 whitespace-nowrap">
-              <span className="text-zinc-400">
-                Sum:{" "}
-                <strong className="text-zinc-200 tabular-nums">
-                  €{mathSanity.calculatedSum.toFixed(2)}
-                </strong>
-              </span>
-              <span className="text-zinc-600">/</span>
-              <span className="text-zinc-400">
-                Ticket:{" "}
-                <strong className="text-zinc-200 tabular-nums">
-                  €{Number(receiptTotal).toFixed(2)}
-                </strong>
-              </span>
-            </div>
-
-            {/* Delta Badge */}
-            {mathSanity.isBalanced ? (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono text-[11px] font-bold whitespace-nowrap">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Balances to cent ✅ (Δ €0.00)</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono text-[11px] font-bold whitespace-nowrap">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>
-                  Discrepancy: Δ {mathSanity.diffSign}€{mathSanity.delta.toFixed(2)} ⚠️
-                </span>
-              </span>
-            )}
-          </div>
-
-          {/* Right: Actions */}
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-            {status !== "CONFIRMED" ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteConfirm(true)}
-                  disabled={isPending}
-                  className="p-2.5 sm:px-3 sm:py-2 rounded-xl border border-zinc-800 bg-zinc-900/80 hover:bg-rose-500/10 hover:border-rose-500/30 text-zinc-400 hover:text-rose-400 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors flex items-center gap-1.5"
-                  title="Delete Receipt"
-                >
-                  <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-                  <span className="hidden sm:inline">Delete</span>
-                </button>
-
-                {nextPendingId ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleConfirmReceipt()}
-                      disabled={isPending}
-                      className="px-3 sm:px-3.5 py-2.5 rounded-xl border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors"
-                    >
-                      Confirm & Exit
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleConfirmReceipt(`/receipts/${nextPendingId}/review`)}
-                      disabled={isPending}
-                      className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs sm:text-sm whitespace-nowrap shrink-0 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-                    >
-                      {isPending ? (
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="w-4 h-4" />
-                      )}
-                      <span>Confirm & Next ({pendingReviewCount} left) →</span>
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => handleConfirmReceipt()}
-                    disabled={isPending}
-                    className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs sm:text-sm whitespace-nowrap shrink-0 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-                  >
-                    {isPending ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4" />
-                    )}
-                    <span>Confirm Receipt & Train Aliases</span>
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteConfirm(true)}
-                  disabled={isPending}
-                  className="px-3 py-2 rounded-xl border border-zinc-800 bg-zinc-900/80 hover:bg-rose-500/10 hover:border-rose-500/30 text-zinc-400 hover:text-rose-400 text-xs font-semibold transition-colors flex items-center gap-1.5"
-                  title="Delete Receipt"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Delete</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleReopenReceipt}
-                  disabled={isPending}
-                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-300 text-xs font-bold transition-colors border border-amber-500/30"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Reopen for Editing</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// -----------------------------------------------------------------------------
-// ITEM CARD COMPONENT WITH RESOLUTION MODE + INLINE NORMALIZATION EDITOR
-// -----------------------------------------------------------------------------
-interface ItemCardProps {
-  item: ExtendedItemState;
-  index: number;
-  isPendingTier?: boolean;
-  readOnly?: boolean;
-  storeName?: string;
-  onUpdateItem: (index: number, partial: Partial<ExtendedItemState>) => void;
-  onToggleExcluded: () => void;
-  onRemoveItem: () => void;
-  onOpenSearch: () => void;
-}
-
-function ItemCard({
-  item,
-  index,
-  isPendingTier = false,
-  readOnly = false,
-  storeName = "",
-  onUpdateItem,
-  onToggleExcluded,
-  onRemoveItem,
-  onOpenSearch,
-}: ItemCardProps) {
-  const [isExpanded, setIsExpanded] = useState(
-    item.isEditing || item.isCustomManual || false
-  );
-
-  // Catalog Lookup State
-  const [isCatalogOpen, setIsCatalogOpen] = useState(false);
-  const [isCatalogLoading, setIsCatalogLoading] = useState(false);
-  const [catalogMatches, setCatalogMatches] = useState<CatalogLookupResult[]>([]);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [barcodeModalOpen, setBarcodeModalOpen] = useState(false);
-
-  const isModeCreateNew = item.mode === "create_new";
-  const isLinked = item.mode === "link_existing" || !!item.matchedProductInfo;
-  const canonicalBaseUnit = (isLinked && item.matchedProductInfo?.baseUnit)
-    ? item.matchedProductInfo.baseUnit
-    : item.baseUnit;
-
-  const currentQty = Math.max(Number(item.quantity) || 1, 1);
-  const packSize = Number((Number(item.unitMeasure || 1) / currentQty).toFixed(3));
-
-  const handleCatalogLookup = async () => {
-    setIsCatalogOpen(true);
-    setIsCatalogLoading(true);
-    setCatalogError(null);
-    try {
-      const q = item.suggestedName || item.rawName;
-      const res = await fetch(
-        `/api/catalog/lookup?q=${encodeURIComponent(q)}&store=${encodeURIComponent(storeName)}`
-      );
-      if (!res.ok) {
-        throw new Error("Catalog lookup failed");
-      }
-      const data = await res.json();
-      const matches = Array.isArray(data.matches) ? data.matches : [];
-      setCatalogMatches(matches);
-      if (matches.length === 0) {
-        setCatalogError("No matching pack formats found in the catalog.");
-      }
-    } catch {
-      setCatalogError("Unable to connect to the catalog at this time.");
-    } finally {
-      setIsCatalogLoading(false);
-    }
-  };
-
-  const handleBarcodeLookup = async (ean: string) => {
-    setBarcodeModalOpen(false);
-    setIsExpanded(true);
-    setIsCatalogOpen(true);
-    setIsCatalogLoading(true);
-    setCatalogError(null);
-    try {
-      const res = await fetch(`/api/catalog/lookup?barcode=${encodeURIComponent(ean)}`);
-      if (!res.ok) {
-        throw new Error("Barcode lookup failed");
-      }
-      const data = await res.json();
-      const offMatch = data.offMatch as CatalogLookupResult | null;
-      const matches = Array.isArray(data.matches) ? data.matches : [];
-      setCatalogMatches(matches);
-
-      if (data.localProduct) {
-        const lp = data.localProduct;
-        const measure =
-          offMatch && offMatch.hasParsedQuantity !== false && offMatch.unitMeasurePerPack > 0
-            ? Number((currentQty * offMatch.unitMeasurePerPack).toFixed(3))
-            : item.unitMeasure;
-        onUpdateItem(index, {
-          mode: "link_existing",
-          productId: lp.id,
-          matchConfidence: 1.0,
-          baseUnit: lp.baseUnit,
-          unitMeasure: measure,
-          matchedProductInfo: {
-            displayName: lp.displayName,
-            category: lp.category,
-            baseUnit: lp.baseUnit,
-            isStaple: lp.isStaple,
-          },
-          barcode: ean,
-          nutrition: offMatch?.nutrition || null,
-        });
-        setIsCatalogOpen(false);
-      } else if (matches.length === 0) {
-        setCatalogError(`No product found for barcode ${ean}.`);
-      }
-    } catch {
-      setCatalogError("Unable to query OpenFoodFacts for that barcode.");
-    } finally {
-      setIsCatalogLoading(false);
-    }
-  };
-
-  const handleApplyCatalogMatch = (match: CatalogLookupResult) => {
-    const effectiveUnit = isLinked && item.matchedProductInfo
-      ? item.matchedProductInfo.baseUnit
-      : match.hasParsedQuantity !== false
-      ? match.baseUnit
-      : item.baseUnit;
-    const newTotalMeasure =
-      match.hasParsedQuantity !== false && match.unitMeasurePerPack > 0
-        ? Number((currentQty * match.unitMeasurePerPack).toFixed(3))
-        : item.unitMeasure;
-    onUpdateItem(index, {
-      ...(isModeCreateNew && match.ean && match.productName
-        ? { newProductName: match.productName, suggestedName: match.productName }
-        : {}),
-      baseUnit: effectiveUnit,
-      newProductBaseUnit: isLinked ? undefined : effectiveUnit,
-      unitMeasure: newTotalMeasure,
-      isVariableWeight: false,
-      barcode: match.ean || match.nutrition?.ean || item.barcode || null,
-      nutrition: match.nutrition || item.nutrition || null,
-    });
-    setIsCatalogOpen(false);
-  };
-
-  return (
-    <div
-      className={`rounded-2xl border transition-all ${
-        isPendingTier
-          ? "border-amber-500/30 bg-zinc-900/90 shadow-sm"
-          : "border-zinc-800 bg-zinc-900/60 hover:border-zinc-700"
-      }`}
-    >
-      {/* Primary Card Header */}
-      <div className="p-3.5 sm:p-4 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          {/* Left item details */}
-          <div className="space-y-1.5 flex-1 min-w-0">
-            {/* POS verbatim text badge */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs px-2 py-0.5 rounded-md bg-zinc-950 text-zinc-300 border border-zinc-800 truncate max-w-[200px] sm:max-w-xs">
-                &quot;{item.rawName}&quot;
-              </span>
-
-              {item.matchConfidence >= 1.0 ? (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-mono font-bold border border-emerald-500/20 whitespace-nowrap shrink-0">
-                  100% Match
-                </span>
-              ) : item.matchConfidence > 0 ? (
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/20 whitespace-nowrap shrink-0">
-                  {(item.matchConfidence * 100).toFixed(0)}% Match
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 text-[10px] font-mono border border-zinc-700/60 whitespace-nowrap shrink-0">
-                  New Item
-                </span>
-              )}
-
-              {item.newProductIsStaple && (
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 text-[10px] font-mono font-semibold flex items-center gap-1 border border-amber-500/20 whitespace-nowrap shrink-0">
-                  <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                  <span>Staple</span>
-                </span>
-              )}
-
-              {item.isVariableWeight && (
-                <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 text-[10px] font-mono font-semibold border border-cyan-500/20 whitespace-nowrap shrink-0">
-                  Variable Weight / Loose
-                </span>
-              )}
-            </div>
-
-            {/* Display / Linked Name */}
-            <div className="text-sm font-bold text-white truncate">
-              {item.mode === "link_existing" && item.matchedProductInfo
-                ? item.matchedProductInfo.displayName
-                : item.newProductName || item.suggestedName || item.rawName}
-            </div>
-
-            {/* Category & Unit Subtext */}
-            <div className="text-xs text-zinc-400 flex items-center gap-2 font-mono">
-              <span className="text-zinc-300">
-                {item.mode === "link_existing" && item.matchedProductInfo
-                  ? item.matchedProductInfo.category
-                  : item.newProductCategory || item.suggestedCat || "Other"}
-              </span>
-              <span className="text-zinc-600">&bull;</span>
-              <span className="text-zinc-400">
-                {item.quantity} × €{Number(item.unitPrice).toFixed(2)}
-              </span>
-            </div>
-          </div>
-
-          {/* Right prices */}
-          <div className="text-right shrink-0 space-y-1">
-            <div className="text-base font-bold font-mono text-white tabular-nums">
-              €{Number(item.totalPrice).toFixed(2)}
-            </div>
-            <div className="text-xs font-mono font-bold text-emerald-400 tabular-nums">
-              {Number(item.pricePerBaseUnit).toFixed(2)} €/
-              {canonicalBaseUnit.toLowerCase()}
-            </div>
-          </div>
-        </div>
-
-        {/* Resolution Mode Switcher (Active when pending review and not read-only) */}
-        {!readOnly && isPendingTier && (
-          <div className="pt-2 border-t border-zinc-800/80 space-y-2.5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-semibold">
-              <button
-                type="button"
-                onClick={() => {
-                  onUpdateItem(index, {
-                    mode: "create_new",
-                    productId: null,
-                    newProductName: item.suggestedName || item.rawName,
-                    newProductCategory: item.suggestedCat || "Other",
-                    newProductBaseUnit: item.baseUnit || "UNIT",
-                  });
-                }}
-                className={`py-2 px-3 rounded-xl border text-xs transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
-                  isModeCreateNew
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300 font-bold"
-                    : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Create New Product</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={isModeCreateNew ? onOpenSearch : undefined}
-                className={`py-2 px-3 rounded-xl border text-xs transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 ${
-                  !isModeCreateNew
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300 font-bold"
-                    : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <Search className="w-3.5 h-3.5" />
-                <span>
-                  {item.mode === "link_existing"
-                    ? "Linked to Catalogue"
-                    : "Link to Existing Product"}
-                </span>
-              </button>
-            </div>
-
-            {/* Mode A Details: Create New Product Inputs */}
-            {isModeCreateNew ? (
-              <div className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800/80 space-y-2.5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[10px] font-mono text-zinc-400 uppercase">
-                      Canonical Name
-                    </label>
-                    <input
-                      type="text"
-                      value={item.newProductName ?? item.suggestedName}
-                      onChange={(e) =>
-                        onUpdateItem(index, { newProductName: e.target.value })
-                      }
-                      className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      placeholder="e.g. Aceite de Oliva Virgen Extra 1L"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-mono text-zinc-400 uppercase">
-                      Category
-                    </label>
-                    <select
-                      value={item.newProductCategory ?? item.suggestedCat}
-                      onChange={(e) =>
-                        onUpdateItem(index, { newProductCategory: e.target.value })
-                      }
-                      className="w-full bg-zinc-900 border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                    >
-                      {CANONICAL_CATEGORIES.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                  {/* Base Unit Pill Selector */}
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-[10px] font-mono text-zinc-400 mr-1 uppercase whitespace-nowrap">
-                      Base Unit:
-                    </span>
-                    {(["KG", "L", "UNIT"] as const).map((unit) => (
-                      <button
-                        key={unit}
-                        type="button"
-                        onClick={() =>
-                          onUpdateItem(index, {
-                            baseUnit: unit,
-                            newProductBaseUnit: unit,
-                          })
-                        }
-                        className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold border transition-colors whitespace-nowrap shrink-0 ${
-                          item.baseUnit === unit
-                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                            : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200"
-                        }`}
-                      >
-                        {unit}
-                      </button>
                     ))}
-                  </div>
-
-                  {/* Staple Toggle */}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateItem(index, {
-                        newProductIsStaple: !item.newProductIsStaple,
-                      })
-                    }
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap shrink-0 ${
-                      item.newProductIsStaple
-                        ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
-                        : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200"
-                    }`}
-                  >
-                    <Star
-                      className={`w-3.5 h-3.5 ${
-                        item.newProductIsStaple
-                          ? "fill-amber-400 text-amber-400"
-                          : ""
-                      }`}
-                    />
-                    <span>Staple Basket</span>
-                  </button>
-                </div>
+                  </tbody>
+                </table>
               </div>
-            ) : (
-              /* Mode B: Link to Existing Badge */
-              <div className="p-3 rounded-xl bg-zinc-950/70 border border-zinc-800/80 flex items-center justify-between gap-3">
-                <div className="space-y-0.5 min-w-0">
-                  <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5 truncate">
-                    <Check className="w-3.5 h-3.5 shrink-0" />
-                    <span>
-                      {item.matchedProductInfo?.displayName ||
-                        "Selected Product"}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-zinc-400 font-mono flex items-center gap-2">
-                    <span>{item.matchedProductInfo?.category}</span>
-                    <span>&bull;</span>
-                    <span className="text-emerald-400 font-semibold">
-                      BaseUnit Lock: {canonicalBaseUnit}
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={onOpenSearch}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold shrink-0 transition-colors flex items-center gap-1 whitespace-nowrap"
-                >
-                  <Search className="w-3 h-3 text-emerald-400" />
-                  <span>Change Product</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tier 2 Auto-Matched Item Controls (Active for 100% matched items when not read-only) */}
-        {!readOnly && !isPendingTier && (
-          <div className="pt-2 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2 bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-800/60">
-            <div className="flex items-center gap-2 min-w-0">
-              <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <div className="text-xs font-mono truncate">
-                <span className="text-zinc-400">Matched: </span>
-                <span className="font-bold text-emerald-300">
-                  {item.matchedProductInfo?.displayName || item.newProductName || item.suggestedName}
-                </span>
-                {item.matchedProductInfo?.category && (
-                  <span className="text-zinc-500 text-[11px] ml-1.5">
-                    ({item.matchedProductInfo.category})
-                  </span>
-                )}
-                <span className="text-emerald-400 text-[11px] font-bold ml-1.5">
-                  [{canonicalBaseUnit}]
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={onOpenSearch}
-                className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold transition-colors flex items-center gap-1 whitespace-nowrap"
-                title="Select a different product from catalogue"
-              >
-                <Search className="w-3 h-3 text-emerald-400" />
-                <span>Change Product</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onUpdateItem(index, {
-                    mode: "create_new",
-                    productId: null,
-                    matchConfidence: 0.0,
-                    matchedProductInfo: undefined,
-                    newProductName: item.suggestedName || item.rawName,
-                    newProductCategory: item.suggestedCat || "Other",
-                    newProductBaseUnit: item.baseUnit || "UNIT",
-                  });
-                }}
-                className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-300 text-xs font-semibold transition-colors border border-zinc-700/60 flex items-center gap-1 whitespace-nowrap"
-                title="Unlink and create as a new separate product"
-              >
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>Not Same Product (Unlink)</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Secondary Card Footer: Actions & Inline Editor Toggle */}
-        <div className="pt-2 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-zinc-400">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs shadow-inner">
-              <span className="text-zinc-500">Qty:</span>
-              <strong className="text-white tabular-nums">{Number(item.quantity)}</strong>
-              <span className="text-zinc-700">&bull;</span>
-              <span className="text-zinc-500">
-                {canonicalBaseUnit === "KG" ? "Weight:" : canonicalBaseUnit === "L" ? "Volume:" : "Pack Size:"}
-              </span>
-              <strong className="text-emerald-400 tabular-nums">
-                {Number(item.unitMeasure)} {canonicalBaseUnit === "KG" ? "kg" : canonicalBaseUnit === "L" ? "L" : "units"}
-              </strong>
-            </div>
-
-            {/* Catalog lookup quick trigger + Secondary Barcode/EAN lookup */}
-            {!readOnly && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleCatalogLookup}
-                  disabled={isCatalogLoading}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0"
-                >
-                  {isCatalogLoading ? (
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <Search className="w-3 h-3 text-emerald-400" />
-                  )}
-                  <span>Lookup format</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBarcodeModalOpen(true)}
-                  disabled={isCatalogLoading}
-                  title="Secondary barcode / EAN lookup"
-                  aria-label="Scan barcode for item"
-                  className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/40 text-zinc-400 hover:text-emerald-400 transition-colors whitespace-nowrap shrink-0"
-                >
-                  <ScanBarcode className="w-3.5 h-3.5" />
-                </button>
-              </>
-            )}
-          </div>
-
-          {!readOnly && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsExpanded((prev) => !prev)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
-              >
-                <Edit2 className="w-3 h-3 text-emerald-400" />
-                <span>{isExpanded ? "Done" : "Adjust Weight / Pack Size"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onToggleExcluded}
-                className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-amber-400 transition-colors"
-                title="Exclude line from price index"
-              >
-                <Tag className="w-3.5 h-3.5" />
-              </button>
-
-              {item.isCustomManual && (
-                <button
-                  type="button"
-                  onClick={onRemoveItem}
-                  className="p-1 rounded-lg hover:bg-rose-500/10 text-zinc-400 hover:text-rose-400 transition-colors"
-                  title="Remove line"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* INLINE PRICE & UNIT NORMALIZATION EDITOR */}
-      {isExpanded && !readOnly && (
-        <div className="px-4 pb-4 pt-3 border-t border-zinc-800 bg-zinc-950/70 rounded-b-2xl space-y-3.5">
-          {/* Base Unit Lock / Selector Header */}
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-zinc-800/60 text-xs">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider whitespace-nowrap">
-                Normalizing Base Unit:
-              </span>
-              {isLinked && item.matchedProductInfo ? (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono text-xs font-bold whitespace-nowrap shrink-0">
-                  <Scale className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Locked to product ({canonicalBaseUnit})</span>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center gap-1">
-                  {(["KG", "L", "UNIT"] as const).map((unit) => (
-                    <button
-                      key={unit}
-                      type="button"
-                      onClick={() =>
-                        onUpdateItem(index, {
-                          baseUnit: unit,
-                          newProductBaseUnit: unit,
-                        })
-                      }
-                      className={`px-2 py-0.5 rounded-lg text-xs font-mono font-bold border transition-colors whitespace-nowrap shrink-0 ${
-                        item.baseUnit === unit
-                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                          : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200"
-                      }`}
-                    >
-                      {unit === "KG" ? "KG (€/kg)" : unit === "L" ? "L (€/L)" : "UNIT (€/unit)"}
-                    </button>
-                  ))}
-                </div>
-              )}
+      {/* Sticky Bottom Confirmation Bar */}
+      {isEditable && (
+        <div className="sticky bottom-3 z-30 rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-card)]/95 backdrop-blur-md px-4 sm:px-5 py-3.5 shadow-[var(--shadow-soft)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-[13px] tabular-nums space-y-0.5">
+            <div className="font-semibold text-[var(--text-primary)]">
+              Items sum: {formatCurrency(calculatedLineSum)} · Receipt total:{" "}
+              {formatCurrency(parsedTotalAmount)}
             </div>
-
-            <div className="text-xs font-mono font-bold text-emerald-400 tabular-nums break-words">
-              €{Number(item.totalPrice).toFixed(2)} &divide; ({Number(item.quantity)} &times; {Number(item.unitMeasure)} {canonicalBaseUnit.toLowerCase()}) = {Number(item.pricePerBaseUnit).toFixed(2)} €/{canonicalBaseUnit.toLowerCase()}
-            </div>
+            {totalDifference > 0.1 ? (
+              <div className="text-[var(--accent)]">
+                Difference of {formatCurrency(totalDifference)} vs till slip
+                total
+              </div>
+            ) : (
+              <div className="text-[var(--text-muted)]">
+                Matches till slip total
+              </div>
+            )}
           </div>
 
-          {/* Formato por unidad / envase control */}
-          <div className="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800/80 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-zinc-300">
-                  Pack / Unit Format:
-                </span>
-                {canonicalBaseUnit === "KG" && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onUpdateItem(index, { isVariableWeight: !item.isVariableWeight });
-                    }}
-                    className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors border whitespace-nowrap shrink-0 ${
-                      item.isVariableWeight
-                        ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
-                        : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200"
-                    }`}
-                  >
-                    {item.isVariableWeight ? "⚖️ Variable Weight (Counter / Loose)" : "Fixed Pack"}
-                  </button>
-                )}
-              </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={isConfirming || !parsedDateISO}
+              onClick={() => handleConfirmReceipt(false)}
+              className="h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[14px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-60"
+            >
+              {isConfirming && (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              )}
+              <CheckCircle2 className="w-4 h-4" />
+              Confirm receipt
+            </button>
 
-              {/* Catalog Lookup trigger button */}
+            {nextPendingId && (
               <button
                 type="button"
-                onClick={handleCatalogLookup}
-                disabled={isCatalogLoading}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors"
+                disabled={isConfirming || !parsedDateISO}
+                onClick={() => handleConfirmReceipt(true)}
+                className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
               >
-                {isCatalogLoading ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Search className="w-3.5 h-3.5 text-emerald-400" />
-                )}
-                <span>Search format in catalog</span>
+                Confirm and next
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
-            </div>
-
-            {/* Readout of format math */}
-            <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
-              <span className="text-zinc-400">
-                1 pack = <strong className="text-white tabular-nums">{packSize.toFixed(3)}</strong> {canonicalBaseUnit.toLowerCase()}
-              </span>
-              <span className="text-zinc-600">&rarr;</span>
-              <span className="text-zinc-300">
-                Line total: <strong className="text-emerald-400 tabular-nums">{Number(item.unitMeasure).toFixed(3)} {canonicalBaseUnit.toLowerCase()}</strong>
-              </span>
-              <span className="text-zinc-600">&bull;</span>
-              <span className="text-emerald-400 font-bold tabular-nums">
-                {Number(item.pricePerBaseUnit).toFixed(2)} €/{canonicalBaseUnit.toLowerCase()}
-              </span>
-            </div>
-
-            {/* 1-Tap Spanish Format Preset Pills */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] font-mono">
-              <span className="text-zinc-500 mr-1">Common presets:</span>
-              {canonicalBaseUnit === "L" && (
-                <>
-                  {[
-                    { label: "250ml", val: 0.25 },
-                    { label: "330ml", val: 0.33 },
-                    { label: "500ml", val: 0.5 },
-                    { label: "750ml", val: 0.75 },
-                    { label: "1L", val: 1.0 },
-                    { label: "1.5L", val: 1.5 },
-                    { label: "2L", val: 2.0 },
-                    { label: "5L", val: 5.0 },
-                    { label: "Pack 6×1L", val: 6.0 },
-                  ].map((p) => (
-                    <button
-                      key={p.label}
-                      type="button"
-                      onClick={() => {
-                        const newTot = Number((currentQty * p.val).toFixed(3));
-                        onUpdateItem(index, { unitMeasure: newTot, isVariableWeight: false });
-                      }}
-                      className={`px-2 py-0.5 rounded border transition-colors whitespace-nowrap shrink-0 ${
-                        Math.abs(packSize - p.val) < 0.01 && !item.isVariableWeight
-                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold"
-                          : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white"
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </>
-              )}
-              {canonicalBaseUnit === "KG" && (
-                <>
-                  {[
-                    { label: "100g", val: 0.1 },
-                    { label: "200g", val: 0.2 },
-                    { label: "250g", val: 0.25 },
-                    { label: "400g", val: 0.4 },
-                    { label: "500g", val: 0.5 },
-                    { label: "Pack 4×125g (500g)", val: 0.5 },
-                    { label: "Pack 6×125g (750g)", val: 0.75 },
-                    { label: "1kg", val: 1.0 },
-                  ].map((p) => (
-                    <button
-                      key={p.label}
-                      type="button"
-                      onClick={() => {
-                        const newTot = Number((currentQty * p.val).toFixed(3));
-                        onUpdateItem(index, { unitMeasure: newTot, isVariableWeight: false });
-                      }}
-                      className={`px-2 py-0.5 rounded border transition-colors whitespace-nowrap shrink-0 ${
-                        Math.abs(packSize - p.val) < 0.01 && !item.isVariableWeight
-                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold"
-                          : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white"
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onUpdateItem(index, { isVariableWeight: !item.isVariableWeight });
-                    }}
-                    className={`px-2 py-0.5 rounded border transition-colors whitespace-nowrap shrink-0 ${
-                      item.isVariableWeight
-                        ? "bg-amber-500/20 text-amber-300 border-amber-500/50 font-bold"
-                        : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white"
-                    }`}
-                  >
-                    Variable Weight
-                  </button>
-                </>
-              )}
-              {canonicalBaseUnit === "UNIT" && (
-                <>
-                  {[
-                    { label: "1 ud", val: 1 },
-                    { label: "4 ud", val: 4 },
-                    { label: "6 ud", val: 6 },
-                    { label: "10 ud", val: 10 },
-                    { label: "12 ud", val: 12 },
-                    { label: "24 ud", val: 24 },
-                  ].map((p) => (
-                    <button
-                      key={p.label}
-                      type="button"
-                      onClick={() => {
-                        const newTot = Number((currentQty * p.val).toFixed(3));
-                        onUpdateItem(index, { unitMeasure: newTot, isVariableWeight: false });
-                      }}
-                      className={`px-2 py-0.5 rounded border transition-colors whitespace-nowrap shrink-0 ${
-                        Math.abs(packSize - p.val) < 0.01
-                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold"
-                          : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white"
-                      }`}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* OpenFoodFacts ES Catalog Matches Drawer */}
-          {isCatalogOpen && (
-            <div className="p-3 rounded-xl bg-zinc-950 border border-emerald-500/30 space-y-2 animate-in fade-in">
-              <div className="flex items-center justify-between text-xs font-mono pb-1 border-b border-zinc-800">
-                <span className="font-bold text-emerald-400 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Formats in Catalog (OpenFoodFacts ES)</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsCatalogOpen(false)}
-                  className="text-zinc-500 hover:text-zinc-300"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {isCatalogLoading && (
-                <div className="flex items-center gap-2 py-3 text-xs text-zinc-400 font-mono">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                  <span>Searching pack sizes for {storeName || "supermarket"}...</span>
-                </div>
-              )}
-
-              {catalogError && !isCatalogLoading && (
-                <div className="text-xs text-amber-400 font-mono py-1">{catalogError}</div>
-              )}
-
-              {!isCatalogLoading && catalogMatches.length > 0 && (
-                <div className="space-y-1.5 pt-1">
-                  {catalogMatches.map((m, mIdx) => (
-                    <button
-                      key={mIdx}
-                      type="button"
-                      onClick={() => handleApplyCatalogMatch(m)}
-                      className="w-full text-left p-2 rounded-lg bg-zinc-900/80 hover:bg-zinc-800/80 border border-zinc-800 hover:border-emerald-500/40 transition-colors flex items-center justify-between gap-3 text-xs"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-bold text-zinc-200 truncate">
-                          {m.productName}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400 font-mono">
-                          <span>
-                            {m.brand ? `${m.brand} • ` : ""}Pack:{" "}
-                            <strong className="text-emerald-300">
-                              {m.rawQuantityText || "Unknown size"}
-                            </strong>
-                          </span>
-                          {(() => {
-                            const ns = getNutriScoreBadgeStyle(m.nutrition?.nutriScore);
-                            return ns ? (
-                              <span className={`px-1 rounded border text-[10px] ${ns.className}`}>
-                                NS {ns.letter}
-                              </span>
-                            ) : null;
-                          })()}
-                          {(() => {
-                            const nova = getNovaGroupMeta(m.nutrition?.novaGroup);
-                            return nova ? (
-                              <span className={`px-1 rounded border text-[10px] ${nova.className}`}>
-                                {nova.shortLabel}
-                              </span>
-                            ) : null;
-                          })()}
-                        </div>
-                      </div>
-                      <div className="shrink-0 flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono text-[11px] font-bold whitespace-nowrap shrink-0">
-                          {m.unitMeasurePerPack} {m.baseUnit.toLowerCase()}
-                        </span>
-                        <span className="text-emerald-400 font-mono text-xs font-bold whitespace-nowrap shrink-0">
-                          Apply &rarr;
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Numeric Inputs Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-            {/* Quantity */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-mono text-zinc-400 uppercase">
-                Quantity (Packs)
-              </label>
-              <input
-                type="number"
-                min="0.01"
-                step="any"
-                value={item.quantity}
-                onChange={(e) => {
-                  const qty = parseFloat(e.target.value) || 1;
-                  onUpdateItem(index, { quantity: qty });
-                }}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 tabular-nums"
-              />
-            </div>
-
-            {/* Unit Price */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-mono text-zinc-400 uppercase">
-                Shelf Pack Price (€)
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={item.unitPrice}
-                onChange={(e) => {
-                  const up = parseFloat(e.target.value) || 0;
-                  onUpdateItem(index, {
-                    unitPrice: up,
-                    totalPrice: Math.round(up * (item.quantity || 1) * 100) / 100,
-                  });
-                }}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 tabular-nums"
-              />
-            </div>
-
-            {/* Total Line Price */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-mono text-zinc-400 uppercase">
-                Line Total (€)
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={item.totalPrice}
-                onChange={(e) => {
-                  const tp = parseFloat(e.target.value) || 0;
-                  onUpdateItem(index, { totalPrice: tp });
-                }}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 tabular-nums"
-              />
-            </div>
-
-            {/* Measure (Total weight / volume / units) */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-mono text-zinc-400 uppercase">
-                {canonicalBaseUnit === "KG"
-                  ? "Total Net Weight (kg)"
-                  : canonicalBaseUnit === "L"
-                  ? "Total Net Volume (L)"
-                  : "Total Units"}
-              </label>
-              <input
-                type="number"
-                min="0.001"
-                step="any"
-                value={item.unitMeasure}
-                onChange={(e) => {
-                  const m = parseFloat(e.target.value) || 1;
-                  onUpdateItem(index, { unitMeasure: m });
-                }}
-                placeholder={canonicalBaseUnit === "KG" ? "e.g. 0.500" : "1"}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 tabular-nums"
-              />
-            </div>
+            )}
           </div>
         </div>
       )}
 
+      {/* Mobile Full-Screen Receipt Viewer Modal */}
+      {showMobileViewer && (
+        <div
+          className="fixed inset-0 z-50 lg:hidden flex items-center justify-center p-3"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Original receipt photo"
+        >
+          <div
+            className="fixed inset-0 bg-[var(--scrim)]"
+            onClick={() => setShowMobileViewer(false)}
+          />
+          <div className="relative z-10 w-full max-w-lg">
+            <ReceiptViewer
+              receiptId={receipt.id}
+              sourceFile={receipt.sourceFile}
+              hasOriginalPdf={receipt.hasOriginalPdf}
+              fileVersion={receipt.fileVersion}
+              isDigitalDia={receipt.isDigitalDia}
+              isMobileModal
+              onCloseMobileModal={() => setShowMobileViewer(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Product Search Link Modal */}
+      <ProductSearchModal
+        key={searchModalKey ?? "closed"}
+        isOpen={Boolean(searchModalKey)}
+        onClose={() => setSearchModalKey(null)}
+        onSelectProduct={handleSelectProduct}
+        onSwitchToCreateNew={() => handleSwitchToCreateNew()}
+        onApplyBarcodeLookup={handleApplyBarcodeFromModal}
+        currentProductName={
+          activeModalItem?.matchedProductInfo?.displayName ||
+          activeModalItem?.suggestedName
+        }
+        initialQuery={
+          activeModalItem?.suggestedName || activeModalItem?.rawName || ""
+        }
+      />
+
+      {/* Camera Barcode Scanner Modal */}
       <BarcodeScannerModal
-        isOpen={barcodeModalOpen}
-        onClose={() => setBarcodeModalOpen(false)}
-        onDetected={(code) => void handleBarcodeLookup(code)}
+        isOpen={Boolean(barcodeTargetKey)}
+        onClose={() => setBarcodeTargetKey(null)}
+        onDetected={(code) => {
+          const targetKey = barcodeTargetKey;
+          setBarcodeTargetKey(null);
+          if (targetKey) {
+            void handleBarcodeLookupForItem(targetKey, code);
+          }
+        }}
       />
     </div>
   );

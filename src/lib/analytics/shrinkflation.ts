@@ -176,7 +176,7 @@ export async function getShrinkflationIncidents(
           category: curr.product!.category,
           storeId: curr.receipt.store.id,
           storeName: curr.receipt.store.name,
-          storeHex: curr.receipt.store.brandHex || "#10b981",
+          storeHex: curr.receipt.store.brandHex || "#15803D",
           storeSlug: curr.receipt.store.slug,
           date: curr.receipt.purchaseDate.toISOString(),
           oldDate: prev.receipt.purchaseDate.toISOString(),

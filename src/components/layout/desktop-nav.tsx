@@ -5,51 +5,80 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
-  Receipt,
-  Camera,
+  Plus,
   Search,
   LogOut,
-  LogIn,
-  ShoppingBag,
-  GitCompare,
-  Store,
-  FileText,
-  TrendingUp,
   User as UserIcon,
   ChevronDown,
   Settings,
 } from "lucide-react";
 import { SearchModal } from "./search-modal";
 import { InstallAppButton } from "@/components/pwa/install-app-button";
+import { BrandMark } from "@/components/common/brand-mark";
+import { ThemeSwitch } from "@/components/providers/theme-provider";
+import type { UserProfile } from "./app-shell";
 
-interface UserProfile {
-  id: string;
-  username: string;
-  role: "ADMIN" | "USER";
+interface NavItem {
+  href: string;
+  label: string;
+  matchPrefix?: string;
 }
 
-export function DesktopNav({ user, publicCatalog = false }: { user?: UserProfile | null; publicCatalog?: boolean }) {
-  const pathname = usePathname();
+export function DesktopNav({
+  user,
+  publicCatalog = false,
+}: {
+  user?: UserProfile | null;
+  publicCatalog?: boolean;
+}) {
+  const pathname = usePathname() || "/";
+  const isLoginPage = pathname.startsWith("/login");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const isActive = (path: string) => {
-    if (path === "/") return pathname === "/";
-    return pathname.startsWith(path);
+  const isActive = (item: NavItem) => {
+    if (item.href === "/") return pathname === "/";
+    return pathname.startsWith(item.matchPrefix || item.href);
   };
 
-  const navLinks = [
-    { href: "/", label: "Home", icon: TrendingUp },
-    { href: "/products", label: "Products", icon: ShoppingBag },
-    { href: "/compare", label: "Compare", icon: GitCompare },
-    { href: "/stores", label: "Stores", icon: Store },
-  ];
+  const navLinks: NavItem[] = user
+    ? [
+        { href: "/", label: "Home" },
+        { href: "/products", label: "Groceries" },
+        { href: "/compare", label: "Compare" },
+        { href: "/my-stats", label: "Spending" },
+        { href: "/stores", label: "Supermarkets" },
+        { href: "/my-receipts", label: "Receipts", matchPrefix: "/my-receipts" },
+        ...(user.role === "ADMIN"
+          ? [{ href: "/admin/settings", label: "Settings", matchPrefix: "/admin" }]
+          : []),
+      ]
+    : publicCatalog
+      ? [
+          { href: "/", label: "Home" },
+          { href: "/products", label: "Groceries" },
+          { href: "/compare", label: "Compare" },
+          { href: "/stores", label: "Supermarkets" },
+        ]
+      : [];
 
-  // Close dropdown menu on click outside
+  useEffect(() => {
+    const onScroll = () => {
+      setIsScrolled(window.scrollY > 8);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(event.target as Node)
+      ) {
         setIsUserMenuOpen(false);
       }
     }
@@ -57,13 +86,15 @@ export function DesktopNav({ user, publicCatalog = false }: { user?: UserProfile
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Global ⌘K shortcut listener
   useEffect(() => {
+    if (isLoginPage) return;
     function handleGlobalKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         if (pathname.startsWith("/products")) {
-          const input = document.getElementById("catalogue-search-input") as HTMLInputElement | null;
+          const input = document.getElementById(
+            "catalogue-search-input"
+          ) as HTMLInputElement | null;
           if (input) {
             input.focus();
             input.select();
@@ -75,44 +106,62 @@ export function DesktopNav({ user, publicCatalog = false }: { user?: UserProfile
     }
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [pathname]);
+  }, [pathname, isLoginPage]);
+
+  if (isLoginPage) {
+    return (
+      <header className="hidden md:block sticky top-0 z-40 w-full">
+        <div className="max-w-[1120px] mx-auto px-6 h-[68px] flex items-center justify-between gap-4">
+          <Link href="/" aria-label="Ticketera home">
+            <BrandMark />
+          </Link>
+          <ThemeSwitch />
+        </div>
+      </header>
+    );
+  }
+
+  const showNav = !!user || publicCatalog;
 
   return (
     <>
-      <header className="hidden lg:block sticky top-0 z-40 w-full backdrop-blur-md bg-zinc-950/80 border-b border-zinc-800/80">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          {/* Left: Brand Logo & Main Nav */}
-          <div className="flex items-center gap-6 lg:gap-8 shrink-0">
-            <Link
-              href="/"
-              className="flex items-center gap-2.5 group transition-transform active:scale-95 whitespace-nowrap shrink-0"
-            >
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:shadow-emerald-500/30 transition-shadow shrink-0">
-                <Receipt className="w-5 h-5 text-zinc-950 stroke-[2.2]" />
-              </div>
-              <div className="flex items-center">
-                <span className="font-bold text-base text-zinc-100 tracking-tight">
-                  Ticket
-                </span>
-                <span className="font-bold text-base text-emerald-400 tracking-tight">
-                  era
-                </span>
-              </div>
-            </Link>
+      <header
+        className={`hidden md:block sticky top-0 z-40 w-full transition-colors duration-150 border-b ${
+          isScrolled
+            ? "bg-[var(--bg-header-scrolled)] backdrop-blur-md border-[var(--border)]"
+            : "bg-transparent border-transparent"
+        }`}
+      >
+        <div className="max-w-[1200px] mx-auto px-4 lg:px-6 h-[68px] flex items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center shrink-0"
+            aria-label="Ticketera home"
+          >
+            <BrandMark />
+          </Link>
 
-            {/* Navigation Links - 1-word clean labels */}
-            {(user || publicCatalog) && (
-            <nav className="flex items-center gap-1 shrink-0">
+          {showNav && (
+            <nav
+              aria-label="Main navigation"
+              className="flex items-center gap-3 lg:gap-5 overflow-x-auto lg:overflow-visible no-scrollbar"
+            >
               {navLinks.map((link) => {
-                const active = isActive(link.href);
+                const active = isActive(link);
+                const isReceiptsActive =
+                  link.href === "/my-receipts" &&
+                  (pathname.startsWith("/my-receipts") ||
+                    pathname.startsWith("/receipts/"));
+                const highlight = active || isReceiptsActive;
                 return (
                   <Link
                     key={link.href}
                     href={link.href}
-                    className={`h-9 px-3 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 inline-flex items-center transition-all ${
-                      active
-                        ? "bg-zinc-800 text-emerald-400 shadow-sm border border-zinc-700/60"
-                        : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+                    aria-current={highlight ? "page" : undefined}
+                    className={`relative h-[68px] inline-flex items-center text-[14px] whitespace-nowrap shrink-0 transition-colors ${
+                      highlight
+                        ? "text-[var(--text-primary)] font-semibold after:absolute after:inset-x-0 after:bottom-0 after:h-[2.5px] after:rounded-t-sm after:bg-[var(--primary)]"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)] font-medium"
                     }`}
                   >
                     {link.label}
@@ -120,121 +169,98 @@ export function DesktopNav({ user, publicCatalog = false }: { user?: UserProfile
                 );
               })}
             </nav>
-            )}
-          </div>
-
-          {/* Center: Command-K Search Trigger */}
-          {(user || publicCatalog) && !pathname.startsWith("/products") && (
-            <div className="flex-1 max-w-xs shrink-0">
-              <button
-                onClick={() => setIsSearchOpen(true)}
-                className="w-full h-9 px-3 rounded-xl border border-zinc-800 bg-zinc-900/60 text-sm text-zinc-400 hover:text-zinc-200 hover:border-zinc-700 hover:bg-zinc-900 transition-all flex items-center justify-between gap-2 whitespace-nowrap shrink-0 group"
-              >
-                <div className="flex items-center gap-2 whitespace-nowrap">
-                  <Search className="w-4 h-4 text-zinc-500 group-hover:text-emerald-400 transition-colors shrink-0" />
-                  <span className="whitespace-nowrap">Search...</span>
-                </div>
-                <kbd className="px-1.5 py-0.5 rounded bg-zinc-800/80 text-[11px] text-zinc-400 border border-zinc-700/60 font-mono whitespace-nowrap shrink-0">
-                  ⌘K
-                </kbd>
-              </button>
-            </div>
           )}
 
-          {/* Right: Auth & Upload CTA */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            {/* Primary Action Button: Scan / Upload */}
-            <Link
-              href={user ? "/upload" : "/login?callbackUrl=/upload"}
-              className="h-9 px-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold text-sm shadow-md shadow-emerald-500/20 active:scale-95 transition-all inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
-            >
-              <Camera className="w-4 h-4 stroke-[2.4] shrink-0" />
-              <span className="whitespace-nowrap">📸 Scan</span>
-            </Link>
+          <div className="flex items-center gap-2 shrink-0">
+            {showNav && !pathname.startsWith("/products") && (
+              <button
+                type="button"
+                onClick={() => setIsSearchOpen(true)}
+                aria-label="Search groceries"
+                title="Search groceries"
+                className="w-9 h-9 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] inline-flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+            )}
 
-            {/* User Profile Dropdown or Sign In Button */}
+            <ThemeSwitch />
+
             {user ? (
-              <div className="relative shrink-0" ref={userMenuRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="h-9 px-3 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-sm font-medium text-zinc-200 transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0"
+              <>
+                <Link
+                  href="/upload"
+                  className="h-[36px] px-3.5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
                 >
-                  <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                    <UserIcon className="w-3.5 h-3.5" />
-                  </div>
-                  <span className="font-medium whitespace-nowrap max-w-[100px] truncate">
-                    {user.username}
-                  </span>
-                  <ChevronDown className={`w-3.5 h-3.5 text-zinc-400 transition-transform ${isUserMenuOpen ? "rotate-180" : ""}`} />
-                </button>
+                  <Plus className="w-4 h-4 stroke-[2.4]" />
+                  <span>Add receipt</span>
+                </Link>
 
-                {/* Dropdown Menu */}
-                {isUserMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-48 rounded-xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-md shadow-2xl p-1 z-50 text-xs animate-in fade-in-50 zoom-in-95">
-                    <div className="px-3 py-2 border-b border-zinc-800/80 mb-1">
-                      <p className="font-semibold text-zinc-200 truncate whitespace-nowrap">{user.username}</p>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50 inline-block mt-0.5">
-                        {user.role}
-                      </span>
-                    </div>
+                <div className="relative shrink-0" ref={userMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsUserMenuOpen((prev) => !prev)}
+                    aria-expanded={isUserMenuOpen}
+                    className="h-[36px] px-2.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+                  >
+                    <UserIcon className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                    <span className="max-w-[84px] truncate">{user.username}</span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-[var(--text-muted)] transition-transform ${
+                        isUserMenuOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
 
-                    <Link
-                      href="/my-receipts"
-                      onClick={() => setIsUserMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
-                    >
-                      <FileText className="w-3.5 h-3.5 shrink-0" />
-                      <span className="whitespace-nowrap">My Receipts</span>
-                    </Link>
+                  {isUserMenuOpen && (
+                    <div className="absolute right-0 mt-2 w-52 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] shadow-[var(--shadow-soft)] p-1.5 z-50 text-[13px]">
+                      <div className="px-3 py-2 border-b border-[var(--border)] mb-1">
+                        <p className="font-semibold text-[var(--text-primary)] truncate">
+                          {user.username}
+                        </p>
+                        <p className="text-[13px] text-[var(--text-muted)]">
+                          {user.role === "ADMIN" ? "Administrator" : "Member"}
+                        </p>
+                      </div>
 
-                    <Link
-                      href="/my-stats"
-                      onClick={() => setIsUserMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
-                    >
-                      <TrendingUp className="w-3.5 h-3.5 shrink-0" />
-                      <span className="whitespace-nowrap">My Stats</span>
-                    </Link>
+                      {user.role === "ADMIN" && (
+                        <Link
+                          href="/admin/settings"
+                          onClick={() => setIsUserMenuOpen(false)}
+                          className="flex items-center gap-2 px-3 py-2 rounded-xl text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors whitespace-nowrap"
+                        >
+                          <Settings className="w-4 h-4 text-[var(--text-muted)] shrink-0" />
+                          <span>Settings and admin</span>
+                        </Link>
+                      )}
 
-                    {user.role === "ADMIN" && (
-                      <Link
-                        href="/admin/settings"
-                        onClick={() => setIsUserMenuOpen(false)}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-zinc-300 hover:text-emerald-400 hover:bg-zinc-900 transition-colors whitespace-nowrap"
+                      <InstallAppButton className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-[var(--primary)] hover:bg-[var(--bg-subtle)] transition-colors whitespace-nowrap text-[13px] font-medium text-left" />
+
+                      <div className="my-1 border-t border-[var(--border)]" />
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          signOut({ callbackUrl: "/login" });
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-[var(--negative)] hover:bg-[var(--negative-tint)] transition-colors whitespace-nowrap text-left cursor-pointer font-medium"
                       >
-                        <Settings className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span className="whitespace-nowrap">Settings</span>
-                      </Link>
-                    )}
-
-                    <InstallAppButton />
-
-                    <div className="my-1 border-t border-zinc-800/80" />
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsUserMenuOpen(false);
-                        signOut({ callbackUrl: "/" });
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors whitespace-nowrap text-left"
-                    >
-                      <LogOut className="w-3.5 h-3.5 shrink-0" />
-                      <span className="whitespace-nowrap">Sign Out</span>
-                    </button>
-                  </div>
-                )}
-              </div>
+                        <LogOut className="w-4 h-4 shrink-0" />
+                        <span>Sign out</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
             ) : (
               <div className="flex items-center gap-2">
                 <InstallAppButton />
                 <Link
                   href="/login"
-                  className="h-9 px-3.5 rounded-xl border border-zinc-800 bg-zinc-900 text-sm font-medium text-zinc-300 hover:text-white hover:border-zinc-700 transition-all inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                  className="h-[38px] px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center whitespace-nowrap shrink-0 transition-colors"
                 >
-                  <LogIn className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                  <span className="whitespace-nowrap">Sign In</span>
+                  Sign in
                 </Link>
               </div>
             )}
@@ -242,7 +268,6 @@ export function DesktopNav({ user, publicCatalog = false }: { user?: UserProfile
         </div>
       </header>
 
-      {/* Global Search Modal Triggered by ⌘K or Search Input */}
       <SearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}

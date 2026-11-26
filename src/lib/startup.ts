@@ -155,7 +155,7 @@ export async function ensureDatabaseSchema() {
         "id" TEXT NOT NULL,
         "name" TEXT NOT NULL,
         "slug" TEXT NOT NULL,
-        "brandHex" TEXT NOT NULL DEFAULT '#10b981',
+        "brandHex" TEXT NOT NULL DEFAULT '#15803D',
         CONSTRAINT "Store_pkey" PRIMARY KEY ("id")
       );`,
 

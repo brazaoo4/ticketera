@@ -258,27 +258,32 @@ export function BarcodeScannerModal({
     <dialog
       ref={dialogRef}
       aria-labelledby={titleId}
-      className="m-auto w-[calc(100%-1.5rem)] max-w-md rounded-2xl border border-zinc-800 bg-zinc-950 text-zinc-100 p-0 shadow-2xl backdrop:bg-black/80 backdrop:backdrop-blur-sm"
+      className="m-auto w-[calc(100%-1.5rem)] max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-primary)] p-0 shadow-2xl backdrop:bg-[var(--scrim)] backdrop:backdrop-blur-[2px]"
     >
       <div className="flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-full bg-[var(--primary-tint)] text-[var(--primary)] border border-[var(--primary)]/25 flex items-center justify-center shrink-0">
               <ScanBarcode className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h1 id={titleId} className="text-sm font-bold text-white truncate">
+              <h2
+                id={titleId}
+                className="font-display font-semibold text-[16px] text-[var(--text-primary)] truncate"
+              >
                 {title}
-              </h1>
-              <p className="text-[11px] text-zinc-400 truncate">{subtitle}</p>
+              </h2>
+              <p className="text-[13px] text-[var(--text-muted)] truncate">
+                {subtitle}
+              </p>
             </div>
           </div>
 
           <button
             type="button"
             onClick={() => dialogRef.current?.close("cancel")}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0"
+            className="w-8 h-8 rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] inline-flex items-center justify-center transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             aria-label="Close barcode scanner"
           >
             <X className="w-4 h-4" />
@@ -286,55 +291,58 @@ export function BarcodeScannerModal({
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto">
-          {/* Live Camera Viewfinder (when BarcodeDetector + camera available) */}
+          {/* Live Camera Viewfinder */}
           {cameraSupported ? (
             <div className="space-y-2">
-              <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 flex items-center justify-center">
+              <div className="relative aspect-video w-full overflow-hidden rounded-xl border border-[var(--border)] bg-[#141513] flex items-center justify-center">
                 <video
                   ref={videoRef}
                   playsInline
                   muted
-                  className={`w-full h-full object-cover ${cameraActive ? "block" : "hidden"}`}
+                  className={`w-full h-full object-cover ${
+                    cameraActive ? "block" : "hidden"
+                  }`}
                 />
                 {cameraActive && (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                    <div className="w-56 h-24 rounded-lg border-2 border-emerald-400/80 shadow-[0_0_0_9999px_rgba(9,9,11,0.45)]" />
+                    <div className="w-56 h-24 rounded-lg border-2 border-[var(--primary)] shadow-[0_0_0_9999px_rgba(20,21,19,0.45)]" />
                   </div>
                 )}
                 {cameraStarting && !cameraActive && (
-                  <div className="flex items-center gap-2 text-xs text-zinc-400 font-mono">
-                    <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                  <div className="flex items-center gap-2 text-[13px] text-[#F2F1EC]">
+                    <Loader2 className="w-4 h-4 animate-spin text-[var(--primary)]" />
                     <span>Starting camera...</span>
                   </div>
                 )}
                 {!cameraStarting && !cameraActive && (
-                  <div className="p-4 text-center space-y-2">
-                    <Camera className="w-6 h-6 text-zinc-500 mx-auto" />
-                    <p className="text-xs text-zinc-400">
+                  <div className="p-4 text-center space-y-2 bg-[var(--bg-subtle)] w-full h-full flex flex-col items-center justify-center">
+                    <Camera className="w-6 h-6 text-[var(--text-muted)] mx-auto" />
+                    <p className="text-[13px] text-[var(--text-muted)]">
                       {cameraError || "Camera preview paused."}
                     </p>
                     <button
                       type="button"
                       onClick={() => void startCamera()}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 font-semibold whitespace-nowrap shrink-0"
+                      className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full border border-[var(--border)] bg-[var(--bg-card)] hover:bg-[var(--bg-page)] text-[13px] text-[var(--text-primary)] font-medium whitespace-nowrap shrink-0 cursor-pointer"
                     >
-                      <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Retry Camera</span>
+                      <Camera className="w-3.5 h-3.5 text-[var(--primary)]" />
+                      <span>Retry camera</span>
                     </button>
                   </div>
                 )}
               </div>
               {cameraActive && (
-                <p className="text-[11px] font-mono text-zinc-400 text-center">
+                <p className="text-[13px] text-[var(--text-muted)] text-center">
                   Align the EAN barcode inside the green frame.
                 </p>
               )}
             </div>
           ) : (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 text-xs text-zinc-400 flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-3.5 text-[13px] text-[var(--text-muted)] flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-[var(--accent)] shrink-0 mt-0.5" />
               <span>
-                Live camera <code className="text-zinc-300">BarcodeDetector</code> is unavailable in this browser. Enter the barcode digits below.
+                Live camera barcode scanning isn&apos;t supported in this
+                browser. Enter the barcode digits below.
               </span>
             </div>
           )}
@@ -343,9 +351,9 @@ export function BarcodeScannerModal({
           <form onSubmit={handleManualSubmit} className="space-y-2">
             <label
               htmlFor="manual-ean-input"
-              className="block text-[11px] font-mono uppercase tracking-wider text-zinc-400"
+              className="block text-[13px] font-medium text-[var(--text-primary)]"
             >
-              Manual EAN / UPC Code
+              Barcode digits (EAN / UPC)
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -360,32 +368,36 @@ export function BarcodeScannerModal({
                 }}
                 placeholder="e.g. 8480000105302"
                 autoFocus={!cameraSupported}
-                className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-white placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500 tabular-nums"
+                className="flex-1 min-w-0 h-10 px-3.5 rounded-xl bg-[var(--bg-page)] border border-[var(--border)] focus:border-[var(--primary)] text-[14px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none tabular-nums"
               />
               <button
                 type="submit"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold whitespace-nowrap shrink-0 transition-colors"
+                className="inline-flex items-center gap-1.5 h-10 px-4 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
               >
-                <Search className="w-3.5 h-3.5" />
+                <Search className="w-4 h-4" />
                 <span>Lookup</span>
               </button>
             </div>
             {manualError && (
-              <p className="text-[11px] text-rose-400">{manualError}</p>
+              <p className="text-[13px] text-[var(--negative)]">
+                {manualError}
+              </p>
             )}
           </form>
 
-          {/* Optional Scan from Photo (when BarcodeDetector is available) */}
+          {/* Optional Scan from Photo */}
           {detectorSupported && (
-            <div className="pt-1 flex items-center justify-between border-t border-zinc-800/80">
-              <span className="text-[11px] text-zinc-500">Or decode from a product photo</span>
-              <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 font-medium cursor-pointer whitespace-nowrap shrink-0 transition-colors">
+            <div className="pt-2 flex items-center justify-between border-t border-[var(--border)]">
+              <span className="text-[13px] text-[var(--text-muted)]">
+                Or read from a product photo
+              </span>
+              <label className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-[var(--bg-subtle)] hover:border-[var(--border-strong)] border border-[var(--border)] text-[13px] text-[var(--text-primary)] font-medium cursor-pointer whitespace-nowrap shrink-0 transition-colors">
                 {scanningPhoto ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--primary)]" />
                 ) : (
-                  <ImagePlus className="w-3.5 h-3.5 text-emerald-400" />
+                  <ImagePlus className="w-3.5 h-3.5 text-[var(--primary)]" />
                 )}
-                <span>Scan Photo</span>
+                <span>Scan photo</span>
                 <input
                   type="file"
                   accept="image/*"

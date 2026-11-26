@@ -1,17 +1,15 @@
 "use client";
 
 import React, { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   Globe,
   Lock,
-  Loader2,
-  Check,
-  AlertCircle,
-  Eye,
-  ShieldAlert,
-  Cpu,
-  Database,
   Sparkles,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Database,
   Trash2,
 } from "lucide-react";
 import { updatePublicCatalogAction } from "./actions";
@@ -42,321 +40,306 @@ export function SettingsClient({
   systemInfo,
   backupSummary,
 }: SettingsClientProps) {
+  const router = useRouter();
   const [isPublicCatalog, setIsPublicCatalog] = useState(initialPublicCatalog);
   const [demoActive, setDemoActive] = useState(isDemoActive);
+  const [confirmClearDemo, setConfirmClearDemo] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
 
-  const handleTogglePublicCatalog = () => {
+  function handleTogglePublicCatalog() {
     const nextState = !isPublicCatalog;
     setIsPublicCatalog(nextState);
     setFeedback(null);
 
     startTransition(async () => {
       const res = await updatePublicCatalogAction(nextState);
-      if (res.success) {
-        setFeedback({
-          type: "success",
-          message: res.message || "Setting updated successfully.",
-        });
-      } else {
-        // Revert on failure
+      if (!res.success) {
         setIsPublicCatalog(!nextState);
         setFeedback({
           type: "error",
-          message: res.error || "Failed to update setting.",
+          message: res.error || "Could not update household privacy setting.",
         });
+      } else {
+        setFeedback({
+          type: "success",
+          message: nextState
+            ? "Public price tracker enabled for anyone opening your link."
+            : "Tracker restricted to signed-in household members.",
+        });
+        router.refresh();
       }
     });
-  };
+  }
 
-  const handleToggleDemoData = () => {
+  function handleLoadDemo() {
     setFeedback(null);
     startTransition(async () => {
-      if (demoActive) {
-        const res = await clearDemoDataAction();
-        if (res.success) {
-          setDemoActive(false);
-          setFeedback({
-            type: "success",
-            message: "Demo receipts and placeholder files cleared successfully.",
-          });
-        } else {
-          setFeedback({
-            type: "error",
-            message: "error" in res ? (res.error as string) : "Failed to clear demo data.",
-          });
-        }
+      const res = await loadDemoDataAction();
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          message:
+            ("error" in res && res.error) ||
+            "Could not load sample household receipts.",
+        });
       } else {
-        const res = await loadDemoDataAction();
-        if (res.success) {
-          setDemoActive(true);
-          setFeedback({
-            type: "success",
-            message: "Spanish demo dataset loaded successfully.",
-          });
-        } else {
-          setFeedback({
-            type: "error",
-            message: "error" in res ? (res.error as string) : "Failed to load demo dataset.",
-          });
-        }
+        setDemoActive(true);
+        setConfirmClearDemo(false);
+        setFeedback({
+          type: "success",
+          message:
+            "Sample receipts and supermarket prices are now active across your views.",
+        });
+        router.refresh();
       }
     });
-  };
+  }
+
+  function handleClearDemo() {
+    setFeedback(null);
+    startTransition(async () => {
+      const res = await clearDemoDataAction();
+      if (!res.success) {
+        setFeedback({
+          type: "error",
+          message:
+            ("error" in res && res.error) || "Could not clear sample data.",
+        });
+      } else {
+        setDemoActive(false);
+        setConfirmClearDemo(false);
+        setFeedback({
+          type: "success",
+          message:
+            "Sample receipts and prices removed. Your own receipts remain untouched.",
+        });
+        router.refresh();
+      }
+    });
+  }
+
+  const readerCount = [
+    systemInfo.hasGemini,
+    systemInfo.hasGroq,
+    systemInfo.hasOpenAI,
+  ].filter(Boolean).length;
 
   return (
     <div className="space-y-6">
-      {/* Toast Notification */}
       {feedback && (
         <div
-          className={`p-4 rounded-2xl border text-xs flex items-center justify-between gap-3 transition-all ${
-            feedback.type === "success"
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-              : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+          role={feedback.type === "error" ? "alert" : "status"}
+          className={`rounded-2xl border px-4 py-3 flex items-center gap-2.5 text-[14px] ${
+            feedback.type === "error"
+              ? "border-[var(--negative)]/30 bg-[var(--negative-tint)] text-[var(--negative)]"
+              : "border-[var(--positive)]/30 bg-[var(--positive-tint)] text-[var(--positive)]"
           }`}
         >
-          <div className="flex items-center gap-2">
-            {feedback.type === "success" ? (
-              <Check className="w-4 h-4 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 shrink-0" />
-            )}
-            <span>{feedback.message}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedback(null)}
-            className="text-zinc-400 hover:text-zinc-200 text-xs shrink-0 whitespace-nowrap"
-          >
-            Dismiss
-          </button>
+          {feedback.type === "error" ? (
+            <AlertCircle className="w-4 h-4 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          )}
+          <span>{feedback.message}</span>
         </div>
       )}
 
-      {/* Main Setting: Public vs Private Catalogue Policy */}
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800/80 pb-5">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-white">
-                Catalogue Privacy & Access Policy
-              </span>
-              <span
-                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap shrink-0 ${
-                  isPublicCatalog
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                    : "bg-zinc-800 text-zinc-300 border border-zinc-700"
-                }`}
-              >
-                {isPublicCatalog ? (
-                  <>
-                    <Globe className="w-3 h-3 shrink-0" />
-                    <span>Public Catalogue</span>
-                  </>
-                ) : (
-                  <>
-                    <Lock className="w-3 h-3 shrink-0" />
-                    <span>Private Instance</span>
-                  </>
-                )}
-              </span>
-            </div>
-            <p className="text-xs text-zinc-400 max-w-xl">
-              Control whether unauthenticated visitors can view public product prices,
-              charts, and store directories or if full authentication is mandatory.
-            </p>
-          </div>
-
-          {/* Toggle Switch */}
-          <div className="flex items-center gap-3 shrink-0">
-            <span className="text-xs font-mono text-zinc-400">
-              {isPublicCatalog ? "Public" : "Private"}
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={isPublicCatalog}
-              disabled={isPending}
-              onClick={handleTogglePublicCatalog}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-zinc-950 disabled:opacity-50 ${
-                isPublicCatalog ? "bg-emerald-500" : "bg-zinc-700"
+      {/* Privacy & Access */}
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 sm:p-6 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5 max-w-2xl">
+            <div
+              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                isPublicCatalog
+                  ? "bg-[var(--primary-tint)] text-[var(--primary)]"
+                  : "bg-[var(--accent-tint)] text-[var(--accent)]"
               }`}
             >
-              <span
-                aria-hidden="true"
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                  isPublicCatalog ? "translate-x-5" : "translate-x-0"
-                }`}
-              />
-            </button>
-            {isPending && (
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-400 shrink-0" />
+              {isPublicCatalog ? (
+                <Globe className="w-5 h-5" />
+              ) : (
+                <Lock className="w-5 h-5" />
+              )}
+            </div>
+            <div className="space-y-1">
+              <h2 className="font-display font-semibold text-[18px] text-[var(--text-primary)]">
+                Public price browser
+              </h2>
+              <p className="text-[14px] text-[var(--text-muted)] leading-relaxed">
+                {isPublicCatalog
+                  ? "Enabled — guests can browse supermarket prices, item history, and store comparisons without signing in. Personal receipts and spending summaries always require sign-in."
+                  : "Private — visitors must sign in before viewing any household prices, groceries, or supermarket comparisons."}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isPublicCatalog}
+            disabled={isPending}
+            onClick={handleTogglePublicCatalog}
+            className={`inline-flex items-center gap-2.5 h-10 px-4 rounded-full border text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-60 ${
+              isPublicCatalog
+                ? "border-[var(--primary)] bg-[var(--primary-tint)] text-[var(--primary)]"
+                : "border-[var(--border-strong)] bg-[var(--bg-subtle)] text-[var(--text-primary)]"
+            }`}
+          >
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                isPublicCatalog ? "bg-[var(--primary)]" : "bg-[var(--text-muted)]"
+              }`}
+            />
+            {isPublicCatalog ? "Public access on" : "Sign-in required"}
+          </button>
+        </div>
+      </section>
+
+      {/* Sample Household Data */}
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 sm:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5 max-w-2xl">
+            <div className="w-10 h-10 rounded-xl bg-[var(--primary-tint)] text-[var(--primary)] flex items-center justify-center shrink-0">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="font-display font-semibold text-[18px] text-[var(--text-primary)]">
+                Sample pantry data
+              </h2>
+              <p className="text-[14px] text-[var(--text-muted)] leading-relaxed">
+                {demoActive
+                  ? "Sample receipts and price histories from Spanish supermarkets are currently active so you can explore comparisons right away."
+                  : "Load a ready-made set of Spanish grocery receipts to preview price history charts and supermarket basket comparisons."}
+              </p>
+            </div>
+          </div>
+
+          <div className="shrink-0">
+            {demoActive ? (
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => setConfirmClearDemo((prev) => !prev)}
+                className="h-10 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] hover:border-[var(--negative)] text-[13px] font-semibold text-[var(--negative)] inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear sample data
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={handleLoadDemo}
+                className="h-10 px-5 rounded-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-on)] text-[13px] font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+              >
+                {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                Load sample data
+              </button>
             )}
           </div>
         </div>
 
-        {/* Access Matrix Breakdown */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-2">
-            <div className="flex items-center gap-1.5 font-semibold text-emerald-400">
-              <Eye className="w-3.5 h-3.5 shrink-0" />
-              <span>Public Pages (When Enabled)</span>
-            </div>
-            <p className="text-zinc-400 text-xs">
-              Anyone with the link can view these read-only intelligence pages without signing in:
+        {demoActive && confirmClearDemo && (
+          <div className="rounded-xl border border-[var(--negative)]/30 bg-[var(--negative-tint)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <p className="text-[13px] text-[var(--text-primary)]">
+              Remove all sample receipts and products? Receipts you uploaded or
+              synced yourself will stay safe.
             </p>
-            <ul className="list-disc list-inside space-y-1 text-zinc-300 text-xs">
-              <li>Home Intelligence Dashboard (<code className="text-zinc-400">/</code>)</li>
-              <li>Product Catalogue & Sparklines (<code className="text-zinc-400">/products</code>)</li>
-              <li>Multi-Year Price Evolution Charts (<code className="text-zinc-400">/products/[slug]</code>)</li>
-              <li>Supermarket Directory & Rankings (<code className="text-zinc-400">/stores</code>)</li>
-              <li>Multi-Store Basket Comparator (<code className="text-zinc-400">/compare</code>)</li>
-              <li>Instant Product Search API (<code className="text-zinc-400">/api/products/search</code>)</li>
-            </ul>
-          </div>
-
-          <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-2">
-            <div className="flex items-center gap-1.5 font-semibold text-amber-400">
-              <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-              <span>Always Protected (Login Required)</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={handleClearDemo}
+                className="h-9 px-4 rounded-full bg-[var(--negative)] text-[var(--negative-on)] text-[13px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Yes, clear sample data
+              </button>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => setConfirmClearDemo(false)}
+                className="h-9 px-4 rounded-full border border-[var(--border)] bg-[var(--bg-card)] text-[13px] font-medium text-[var(--text-primary)] whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Cancel
+              </button>
             </div>
-            <p className="text-zinc-400 text-xs">
-              These personal actions and views always require authentication regardless of catalogue mode:
-            </p>
-            <ul className="list-disc list-inside space-y-1 text-zinc-300 text-xs">
-              <li>Receipt Upload Dropzone (<code className="text-zinc-400">/upload</code>)</li>
-              <li>AI Verification & Review Workstation (<code className="text-zinc-400">/receipts/[id]/review</code>)</li>
-              <li>Receipt Vault Archive (<code className="text-zinc-400">/my-receipts</code>)</li>
-              <li>Personal Inflation & Shrinkflation (<code className="text-zinc-400">/my-stats</code>)</li>
-              <li>Admin Catalogue & User Management (<code className="text-zinc-400">/admin/*</code>)</li>
-            </ul>
           </div>
-        </div>
-      </div>
+        )}
+      </section>
 
-      {/* Demo Dataset Controls */}
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-white">Spanish Demo Dataset</span>
-            <span
-              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap shrink-0 ${
-                demoActive
-                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-                  : "bg-zinc-800 text-zinc-400 border border-zinc-700"
-              }`}
-            >
-              {demoActive ? "Active (Sample Data Loaded)" : "Disabled (Real Data Only)"}
-            </span>
-          </div>
-          <p className="text-xs text-zinc-400 max-w-xl">
-            Pre-loads 6 months of historical receipts across Mercadona, Lidl, Carrefour, Consum, and DIA
-            with real Spanish tax breakdowns and a shrinkflation benchmark.
-          </p>
+      {/* Plain-English System Capabilities */}
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2.5">
+          <Database className="w-4 h-4 text-[var(--primary)]" />
+          <h2 className="font-display font-semibold text-[18px] text-[var(--text-primary)]">
+            Receipt reading & storage
+          </h2>
         </div>
 
-        <button
-          type="button"
-          disabled={isPending}
-          onClick={handleToggleDemoData}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-all whitespace-nowrap shrink-0 disabled:opacity-50 ${
-            demoActive
-              ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30"
-              : "bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
-          }`}
-        >
-          {isPending ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-          ) : demoActive ? (
-            <Trash2 className="w-3.5 h-3.5 shrink-0" />
-          ) : (
-            <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-          )}
-          <span>{demoActive ? "Purge Demo Dataset" : "Load Demo Dataset"}</span>
-        </button>
-      </div>
-
-      {/* Full Portable Backup & Restore */}
-      <BackupRestorePanel backupSummary={backupSummary} />
-
-      {/* AI Vision & Storage Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-3">
-          <div className="flex items-center gap-2 text-zinc-300 font-semibold text-xs uppercase tracking-wide">
-            <Cpu className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>AI Multimodal Vision Providers</span>
-          </div>
-          <div className="space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-400">1. Google Gemini 2.5 Flash</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[var(--border)]">
+          <div className="p-5 space-y-2">
+            <div className="font-medium text-[15px] text-[var(--text-primary)]">
+              Automatic receipt readers
+            </div>
+            <p className="text-[13px] text-[var(--text-muted)]">
+              {readerCount > 0
+                ? `${readerCount} configured reader ${
+                    readerCount === 1 ? "provider is" : "providers are"
+                  } active to extract supermarket line items and pack weights.`
+                : "No automatic receipt reader key is currently configured on the server."}
+            </p>
+            <div className="pt-1 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
               <span
-                className={`font-mono text-xs px-2 py-0.5 rounded whitespace-nowrap shrink-0 ${
+                className={
                   systemInfo.hasGemini
-                    ? "bg-emerald-500/10 text-emerald-400"
-                    : "bg-zinc-800 text-zinc-500"
-                }`}
+                    ? "text-[var(--positive)] font-medium"
+                    : "text-[var(--text-muted)]"
+                }
               >
-                {systemInfo.hasGemini ? "Active (Primary)" : "Not Configured"}
+                Primary reader: {systemInfo.hasGemini ? "Ready" : "Not configured"}
               </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-400">2. Groq Multimodal</span>
               <span
-                className={`font-mono text-xs px-2 py-0.5 rounded whitespace-nowrap shrink-0 ${
+                className={
                   systemInfo.hasGroq
-                    ? "bg-emerald-500/10 text-emerald-400"
-                    : "bg-zinc-800 text-zinc-500"
-                }`}
+                    ? "text-[var(--positive)] font-medium"
+                    : "text-[var(--text-muted)]"
+                }
               >
-                {systemInfo.hasGroq ? "Active (Failover)" : "Not Configured"}
+                Backup reader 1: {systemInfo.hasGroq ? "Ready" : "Not configured"}
               </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-400">3. OpenAI GPT-4o-mini</span>
               <span
-                className={`font-mono text-xs px-2 py-0.5 rounded whitespace-nowrap shrink-0 ${
+                className={
                   systemInfo.hasOpenAI
-                    ? "bg-emerald-500/10 text-emerald-400"
-                    : "bg-zinc-800 text-zinc-500"
-                }`}
+                    ? "text-[var(--positive)] font-medium"
+                    : "text-[var(--text-muted)]"
+                }
               >
-                {systemInfo.hasOpenAI ? "Active (Fallback)" : "Not Configured"}
+                Backup reader 2: {systemInfo.hasOpenAI ? "Ready" : "Not configured"}
               </span>
             </div>
           </div>
-        </div>
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-3">
-          <div className="flex items-center gap-2 text-zinc-300 font-semibold text-xs uppercase tracking-wide">
-            <Database className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Storage & Persistence</span>
-          </div>
-          <div className="space-y-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-400">Storage Volume</span>
-              <span className="font-mono text-xs text-zinc-200 whitespace-nowrap shrink-0">
-                {systemInfo.uploadDir}
-              </span>
+          <div className="p-5 space-y-2">
+            <div className="font-medium text-[15px] text-[var(--text-primary)]">
+              Receipt archive storage
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-400">Image Compression</span>
-              <span className="font-mono text-xs text-emerald-400 whitespace-nowrap shrink-0">
-                WebP (Thermal Preprocess)
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-zinc-400">Background Worker</span>
-              <span className="font-mono text-xs text-emerald-400 whitespace-nowrap shrink-0">
-                BullMQ Receipt Queue
-              </span>
+            <p className="text-[13px] text-[var(--text-muted)]">
+              Uploaded photos and supermarket PDFs are stored privately on your
+              server and optimized for fast drawer previews.
+            </p>
+            <div className="pt-1 text-[13px] text-[var(--text-primary)] font-medium break-all">
+              Archive folder: {systemInfo.uploadDir}
             </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      <BackupRestorePanel backupSummary={backupSummary} />
     </div>
   );
 }

@@ -46,7 +46,7 @@ export default async function UploadPage({
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-[920px] mx-auto px-4 sm:px-6 py-7 sm:py-10">
       <UploadClient
         stores={stores}
         initialReceiptId={initialReceiptId}

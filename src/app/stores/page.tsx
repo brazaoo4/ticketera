@@ -13,21 +13,20 @@ export default async function StoresPage() {
     orderBy: { name: "asc" },
   });
 
-  // Calculate actual PostgreSQL statistics for every supermarket
   const stores = await Promise.all(
     dbStores.map(async (store) => {
       const [distinctProducts, receiptsCount] = await Promise.all([
         prisma.receiptItem.groupBy({
           by: ["productId"],
           where: {
-            receipt: { storeId: store.id },
+            receipt: { storeId: store.id, status: "CONFIRMED" },
             confirmed: true,
             excluded: false,
             productId: { not: null },
           },
         }),
         prisma.receipt.count({
-          where: { storeId: store.id },
+          where: { storeId: store.id, status: "CONFIRMED" },
         }),
       ]);
 
@@ -35,7 +34,7 @@ export default async function StoresPage() {
         id: store.id,
         name: store.name,
         slug: store.slug,
-        brandHex: store.brandHex || "#10b981",
+        brandHex: store.brandHex || "#15803D",
         productsCount: distinctProducts.length,
         receiptsCount,
       };
@@ -43,7 +42,7 @@ export default async function StoresPage() {
   );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-[1120px] mx-auto px-4 sm:px-6 py-7 sm:py-10">
       <StoresClient initialStores={stores} isLoggedIn={isLoggedIn} />
     </div>
   );

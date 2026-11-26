@@ -19,9 +19,9 @@ export async function createStoreAction(formData: {
     return { error: "Supermarket name must be at least 2 characters long." };
   }
 
-  let brandHex = formData.brandHex?.trim() || "#10b981";
+  let brandHex = formData.brandHex?.trim() || "#15803D";
   if (!/^#[0-9A-Fa-f]{6}$/.test(brandHex)) {
-    brandHex = "#10b981";
+    brandHex = "#15803D";
   }
 
   // Generate clean slug
@@ -89,9 +89,9 @@ export async function updateStoreAction(formData: {
     return { error: "Supermarket name must be at least 2 characters long." };
   }
 
-  let validHex = brandHex?.trim() || "#10b981";
+  let validHex = brandHex?.trim() || "#15803D";
   if (!/^#[0-9A-Fa-f]{6}$/.test(validHex)) {
-    validHex = "#10b981";
+    validHex = "#15803D";
   }
 
   try {
