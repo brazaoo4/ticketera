@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.1.0](https://github.com/brazaoo4/ticketera/compare/v3.0.0...v3.1.0) (2026-11-26)
+
+
+### Features
+
+* **admin:** allow discarding and restoring duplicate product suggestions ([1bcab01](https://github.com/brazaoo4/ticketera/commit/1bcab018474385a60e21819efc80bad33520079c))
+
+
+### Bug Fixes
+
+* **nutrition:** fetch all missing items with progress, retry, and fresh-food matching ([23014ad](https://github.com/brazaoo4/ticketera/commit/23014ad6b8efd00e59a3c9f1d2b83a296ed892b5))
+
 ## [3.0.0](https://github.com/brazaoo4/ticketera/compare/v2.6.0...v3.0.0) (2026-11-26)
 
 
